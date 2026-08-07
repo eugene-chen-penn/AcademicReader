@@ -34,12 +34,48 @@
         color: #fff;
       }
 
+      /* Shared mount point for Wave-2 toolbar controls (familiarity slider,
+         region-select toggle, settings link, etc). Each track appends its
+         own control here via getElementById at runtime rather than editing
+         this file, so independent tracks never touch the same file. Flex
+         row, controls added in any order should just line up. */
+      #toolbar {
+        position: fixed;
+        top: 32px;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 6px 16px;
+        background: #3a3d40;
+        color: #ddd;
+        font-size: 13px;
+        z-index: 999;
+      }
+
+      /* Shared mount point for the sidebar chat panel (Track E). Empty and
+         inert until sidebar.ts populates + toggles it; not touched by any
+         other track. */
+      #sidebar-root {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 360px;
+        background: #202225;
+        color: #eee;
+        box-shadow: -2px 0 8px rgba(0, 0, 0, 0.4);
+        z-index: 1001;
+        display: none;
+      }
+
       #pages {
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 12px;
-        padding: 48px 0 24px;
+        padding: 88px 0 24px;
       }
 
       .ar-page {
@@ -83,7 +119,9 @@
   </head>
   <body>
     <div id="status">Loading…</div>
+    <div id="toolbar"></div>
     <div id="pages"></div>
+    <div id="sidebar-root"></div>
     <script type="module" src="viewer.js"></script>
   </body>
 </html>
