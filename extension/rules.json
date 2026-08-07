@@ -5,7 +5,7 @@
     "action": {
       "type": "redirect",
       "redirect": {
-        "regexSubstitution": "chrome-extension://EXTENSION_ID_PLACEHOLDER/viewer.html?file=\\1"
+        "regexSubstitution": "chrome-extension://dplbidighoojohkjjcegfdfinffmdmdj/viewer.html?file=\\1"
       }
     },
     "condition": {
@@ -19,7 +19,7 @@
     "action": {
       "type": "redirect",
       "redirect": {
-        "regexSubstitution": "chrome-extension://EXTENSION_ID_PLACEHOLDER/viewer.html?file=\\1"
+        "regexSubstitution": "chrome-extension://dplbidighoojohkjjcegfdfinffmdmdj/viewer.html?file=\\1"
       }
     },
     "condition": {
@@ -33,7 +33,7 @@
     "action": {
       "type": "redirect",
       "redirect": {
-        "regexSubstitution": "chrome-extension://EXTENSION_ID_PLACEHOLDER/viewer.html?file=\\1"
+        "regexSubstitution": "chrome-extension://dplbidighoojohkjjcegfdfinffmdmdj/viewer.html?file=\\1"
       }
     },
     "condition": {
@@ -47,7 +47,7 @@
     "action": {
       "type": "redirect",
       "redirect": {
-        "regexSubstitution": "chrome-extension://EXTENSION_ID_PLACEHOLDER/viewer.html?file=\\1"
+        "regexSubstitution": "chrome-extension://dplbidighoojohkjjcegfdfinffmdmdj/viewer.html?file=\\1"
       }
     },
     "condition": {
@@ -61,7 +61,7 @@
     "action": {
       "type": "redirect",
       "redirect": {
-        "regexSubstitution": "chrome-extension://EXTENSION_ID_PLACEHOLDER/viewer.html?file=\\1"
+        "regexSubstitution": "chrome-extension://dplbidighoojohkjjcegfdfinffmdmdj/viewer.html?file=\\1"
       }
     },
     "condition": {
@@ -75,7 +75,7 @@
     "action": {
       "type": "redirect",
       "redirect": {
-        "regexSubstitution": "chrome-extension://EXTENSION_ID_PLACEHOLDER/viewer.html?file=\\1"
+        "regexSubstitution": "chrome-extension://dplbidighoojohkjjcegfdfinffmdmdj/viewer.html?file=\\1"
       }
     },
     "condition": {
