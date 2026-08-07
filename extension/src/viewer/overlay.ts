@@ -27,6 +27,14 @@ export function renderHighlightRect(
   el.style.background = "rgba(255, 221, 0, 0.35)";
   el.style.cursor = "pointer";
   el.style.pointerEvents = "auto";
+  // viewer.html's .textLayer sits at z-index: 1 (pdf.js's own convention, so
+  // its spans stay above the canvas for text selection); without an
+  // explicit z-index here, this rect defaults to the stacking order implied
+  // by DOM position, which real-world testing showed loses to a
+  // spatially-overlapping (even though visually transparent) text span more
+  // often than not, silently swallowing the click instead of opening the
+  // sidebar. Must render above the text layer.
+  el.style.zIndex = "2";
   el.addEventListener("click", () => onClick());
   container.appendChild(el);
   return el;

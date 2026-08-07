@@ -276,6 +276,7 @@ async function main(): Promise<void> {
       onHighlightCreated: onHighlightClick,
     });
   } catch (err) {
+    console.error("viewer: failed to render PDF", err);
     setStatus(`Failed to render PDF: ${(err as Error).message}`, true);
   }
 }
