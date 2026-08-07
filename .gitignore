@@ -1,0 +1,10 @@
+backend/.venv/
+backend/data/app.db
+backend/data/crops/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+extension/node_modules/
+extension/dist/
+*.pyc
+.DS_Store
