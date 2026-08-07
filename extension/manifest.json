@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "AcademicReader",
+  "version": "0.1.0",
+  "description": "Redirects academic PDF links into an AI-assisted reader with highlight-and-chat support.",
+  "permissions": [
+    "storage",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "downloads",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://arxiv.org/*",
+    "*://dl.acm.org/*",
+    "*://ieeexplore.ieee.org/*",
+    "*://*.sciencedirect.com/*",
+    "*://link.springer.com/*",
+    "*://*.nature.com/*",
+    "*://www.ncbi.nlm.nih.gov/*",
+    "*://*.jstor.org/*",
+    "*://*.researchgate.net/*",
+    "*://*.ssrn.com/*",
+    "*://*.biorxiv.org/*",
+    "*://*.medrxiv.org/*",
+    "*://*.semanticscholar.org/*",
+    "*://openreview.net/*",
+    "*://aclanthology.org/*",
+    "*://*.plos.org/*",
+    "*://*.mdpi.com/*",
+    "*://onlinelibrary.wiley.com/*",
+    "*://*.tandfonline.com/*",
+    "*://journals.sagepub.com/*",
+    "*://*.cell.com/*",
+    "*://*.science.org/*",
+    "*://*.frontiersin.org/*",
+    "*://*.pnas.org/*",
+    "http://localhost:8721/*"
+  ],
+  "optional_host_permissions": ["*://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Analyze this PDF"
+  },
+  "options_page": "options.html",
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "academic_pdf_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["viewer.html", "viewer.js", "pdf.worker.mjs"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

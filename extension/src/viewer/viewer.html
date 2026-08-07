@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>AcademicReader Viewer</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #525659;
+        color: #eee;
+        font-family: system-ui, sans-serif;
+      }
+
+      #status {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 8px 16px;
+        font-size: 13px;
+        background: #333;
+        color: #ccc;
+        z-index: 1000;
+      }
+
+      #status.hidden {
+        display: none;
+      }
+
+      #status.error {
+        background: #6b1f1f;
+        color: #fff;
+      }
+
+      #pages {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 48px 0 24px;
+      }
+
+      .ar-page {
+        position: relative;
+        background: #fff;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+      }
+
+      .ar-page canvas {
+        display: block;
+      }
+
+      /* Minimal mirror of pdf.js's pdf_viewer.css .textLayer rules, needed
+         because we render pages ourselves rather than using pdf.js's
+         built-in PDFPageView/viewer UI. TextLayer.render() positions spans
+         using `var(--scale-factor)`, which we set per-page in viewer.ts. */
+      .textLayer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        text-align: initial;
+        overflow: clip;
+        opacity: 1;
+        line-height: 1;
+        -webkit-text-size-adjust: none;
+        text-size-adjust: none;
+        forced-color-adjust: none;
+        transform-origin: 0 0;
+        z-index: 1;
+      }
+
+      .textLayer span,
+      .textLayer br {
+        color: transparent;
+        position: absolute;
+        white-space: pre;
+        cursor: text;
+        transform-origin: 0% 0%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Loading…</div>
+    <div id="pages"></div>
+    <script type="module" src="viewer.js"></script>
+  </body>
+</html>
