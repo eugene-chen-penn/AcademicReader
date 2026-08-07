@@ -39,12 +39,28 @@ export interface ExtractedPageText {
  * came from. Items with empty `str` contribute no indexMap entry (nothing
  * to anchor back to) but still count for `hasEOL`.
  *
- * A `\n` is inserted after any item with `hasEOL: true` (pdf.js's own
- * signal that a line ends there), so the normalized text reads as
- * reasonably-formed prose/lines for the LLM instead of one run-on line per
- * page. The `\n` characters themselves have no indexMap entry -- they're
- * synthetic, not backed by a text item -- which is fine, since
- * resolveQuote only needs the items that overlap non-newline characters.
+ * A single space is inserted after any item with `hasEOL: true` (pdf.js's
+ * own signal that a line ends there) UNLESS the text already ends in
+ * whitespace, so wrapped lines read as continuous prose for the LLM instead
+ * of one run-on word-jammed line per page.
+ *
+ * Deliberately a space, not a literal `\n`: the backend's exact-substring
+ * match (`backend/app/services/text_context.py::extract_context`, a plain
+ * `str.find()`, no whitespace normalization) means whatever separator we
+ * put here must byte-for-byte match what the LLM echoes back in
+ * `quoted_text`, or the finding is silently dropped server-side before we
+ * ever see it (`if ctx is None: continue` in the scan router) -- we won't
+ * even get an `error` event to notice. The scan prompt tells the model
+ * "never alter whitespace, casing, or punctuation," but a hard `\n` in the
+ * *middle* of what reads as one sentence (typical for a wrapped PDF line)
+ * is exactly the kind of incidental formatting an LLM is prone to normalize
+ * away to a space when it copies "verbatim" text into a JSON string -- far
+ * more so than it would collapse an intentional space. A space is both the
+ * safer bet for round-tripping through the LLM and how the text should
+ * read as prose anyway. The inserted separator characters themselves have
+ * no indexMap entry -- they're synthetic, not backed by a text item --
+ * which is fine, since resolveQuote only needs the items that overlap
+ * non-separator characters.
  *
  * Known limitation (per spec, not fixed here): pdf.js's `getTextContent()`
  * reading order is not guaranteed correct for multi-column layouts. This
@@ -64,8 +80,8 @@ export function extractPageText(items: TextItem[]): ExtractedPageText {
       normalizedText += str;
       indexMap.push({ itemIndex, start, end: normalizedText.length });
     }
-    if (item.hasEOL) {
-      normalizedText += "\n";
+    if (item.hasEOL && normalizedText.length > 0 && !/\s$/.test(normalizedText)) {
+      normalizedText += " ";
     }
   }
 
@@ -181,6 +197,9 @@ function itemBBoxPdfSpace(item: TextItem): [number, number, number, number] {
  * Converts a PDF user-space axis-aligned rect into a CSS-px rect relative
  * to the page's rendered container, via the page's viewport transform
  * (which encodes the render scale and the PDF-user-space -> CSS-px y-flip).
+ * `viewportTransform` is `page.getViewport({ scale }).transform` -- hoisted
+ * and passed in by the caller (matchedRangesToRects) rather than recomputed
+ * per item, since it's identical for every item on the same page.
  *
  * Deviation from the literal task wording ("Convert to CSS px by
  * multiplying by the page's scale"): naive multiplication by `scale` alone
@@ -193,12 +212,10 @@ function itemBBoxPdfSpace(item: TextItem): [number, number, number, number] {
  */
 function pdfRectToCssPx(
   rect: [number, number, number, number],
-  page: PDFPageProxy,
-  scale: number,
+  viewportTransform: number[],
 ): PixelRect {
-  const viewport = page.getViewport({ scale });
-  const [x0, y0] = Util.applyTransform([rect[0], rect[1]], viewport.transform);
-  const [x1, y1] = Util.applyTransform([rect[2], rect[3]], viewport.transform);
+  const [x0, y0] = Util.applyTransform([rect[0], rect[1]], viewportTransform);
+  const [x1, y1] = Util.applyTransform([rect[2], rect[3]], viewportTransform);
   const x = Math.min(x0, x1);
   const y = Math.min(y0, y1);
   return { x, y, w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
@@ -228,6 +245,10 @@ export function matchedRangesToRects(
 ): PixelRect[] {
   if (ranges.length === 0) return [];
 
+  // Identical for every item on this page -- compute once rather than
+  // re-deriving a viewport per item.
+  const viewportTransform = page.getViewport({ scale }).transform;
+
   type ItemRect = { itemIndex: number; cssRect: PixelRect };
   const itemRects: ItemRect[] = [];
   for (const range of ranges) {
@@ -237,7 +258,7 @@ export function matchedRangesToRects(
       continue;
     }
     const pdfRect = itemBBoxPdfSpace(item);
-    itemRects.push({ itemIndex: range.itemIndex, cssRect: pdfRectToCssPx(pdfRect, page, scale) });
+    itemRects.push({ itemIndex: range.itemIndex, cssRect: pdfRectToCssPx(pdfRect, viewportTransform) });
   }
   if (itemRects.length === 0) return [];
 

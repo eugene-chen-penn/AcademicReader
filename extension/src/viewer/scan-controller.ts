@@ -55,7 +55,8 @@ const renderedHighlights: RenderedHighlightEntry[] = [];
  * Familiarity-slider polarity (spelled out explicitly, see task spec, so
  * the direction is never ambiguous from the code alone):
  *
- * The slider represents "how little I know about this topic", 1..5.
+ * The slider represents "how familiar I am with this topic", 1 (beginner)
+ * to 5 (expert).
  *   - 1 (leftmost, "Beginner — show more"): show everything, including
  *     easy spans a beginner might not know. difficulty >= 1 always shows.
  *   - 5 (rightmost, "Expert — show less"): show only the genuinely hardest
@@ -131,12 +132,12 @@ async function mountFamiliaritySlider(): Promise<void> {
 
   const valueLabel = document.createElement("span");
   valueLabel.className = "ar-familiarity-value";
-  valueLabel.textContent = `Difficulty shown: ${currentFamiliarityLevel}/5`;
+  valueLabel.textContent = `Showing difficulty ≥ ${currentFamiliarityLevel}`;
 
   const handleChange = (): void => {
     const level = Number(slider.value);
     currentFamiliarityLevel = level;
-    valueLabel.textContent = `Difficulty shown: ${level}/5`;
+    valueLabel.textContent = `Showing difficulty ≥ ${level}`;
     applyFamiliarityFilter();
     chrome.storage.local.set({ [STORAGE_KEY]: level }).catch((err) => {
       console.warn("scan-controller: failed to persist familiarity level", err);
@@ -178,8 +179,23 @@ async function buildPageContexts(pages: PageRenderInfo[]): Promise<Map<number, P
   return contexts;
 }
 
-/** Converts a CSS-px rect back to PDF-user-space (resolution-independent)
- * units by dividing out the render scale, per the backend PATCH contract. */
+/**
+ * Converts a CSS-px rect (at whatever `scale` this page was rendered at)
+ * into resolution-independent units by dividing out that scale, per the
+ * backend PATCH contract ("rects, not CSS px" -- see spec).
+ *
+ * Precision note for whoever re-renders these later (e.g. reading them back
+ * via `GET /documents/{content_hash}`): what's stored here is CSS-px
+ * measured at scale=1 -- top-left origin, y increasing downward -- NOT true
+ * PDF user-space (which is bottom-left origin, y increasing upward). The
+ * y-flip already happened inside matchedRangesToRects (via the viewport
+ * transform) before this function ever runs; dividing by `scale` only
+ * undoes the zoom multiplication, not the flip. To redraw a stored rect at
+ * a render scale S: multiply x/y/w/h by S and use the result directly as
+ * CSS px offsets within the page container. Do NOT run it back through
+ * `page.getViewport(...).convertToViewportRectangle` or any other PDF ->
+ * viewport conversion -- that would apply a second, wrong y-flip.
+ */
 function toPersistedRect(rect: PixelRect, scale: number): { x: number; y: number; w: number; h: number } {
   return { x: rect.x / scale, y: rect.y / scale, w: rect.w / scale, h: rect.h / scale };
 }
@@ -219,12 +235,19 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
       return;
     }
 
-    // Constructed from the span event's fields directly. `rects` reflects
-    // what we just computed (in persisted/PDF-user-space units, matching
-    // what we're about to PATCH); `created_at` is a client-side placeholder
-    // since scan span events don't carry the DB row's real timestamp -- the
-    // sidebar's first-message composition (the stated consumer) only needs
-    // id/type/quoted_text/context/reason/difficulty, not created_at.
+    // Persisted/"PDF-user-space" units per the backend PATCH contract, but
+    // see toPersistedRect's doc comment: this is really CSS-px-at-scale-1
+    // (top-left origin, y-down), not true bottom-left-origin PDF user
+    // space -- the y-flip is already baked in and dividing by scale just
+    // undoes the zoom multiplication, not the flip. Computed once and
+    // reused for both the Highlight object and the PATCH body below.
+    const persistedRects = cssRects.map((r) => toPersistedRect(r, ctx.info.scale));
+
+    // Constructed from the span event's fields directly. `created_at` is a
+    // client-side placeholder since scan span events don't carry the DB
+    // row's real timestamp -- the sidebar's first-message composition (the
+    // stated consumer) only needs id/type/quoted_text/context/reason/
+    // difficulty, not created_at.
     const highlight: Highlight = {
       id: event.highlight_id,
       document_id: deps.documentId,
@@ -233,7 +256,7 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
       quoted_text: event.quoted_text,
       prefix_context: event.prefix,
       suffix_context: event.suffix,
-      rects: cssRects.map((r) => toPersistedRect(r, ctx.info.scale)),
+      rects: persistedRects,
       anchor_status: "resolved",
       difficulty: event.difficulty,
       reason: event.reason,
@@ -248,7 +271,6 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
       renderedHighlights.push({ element: el, difficulty: event.difficulty });
     }
 
-    const persistedRects = cssRects.map((r) => toPersistedRect(r, ctx.info.scale));
     patchHighlightRects(event.highlight_id, persistedRects, "resolved").catch((err) => {
       console.warn(`scan-controller: failed to persist rects for highlight ${event.highlight_id}`, err);
     });
