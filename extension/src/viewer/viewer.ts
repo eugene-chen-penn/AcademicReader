@@ -1,12 +1,26 @@
-// Bare PDF.js-based viewer: reads ?file=, fetches the PDF (with credentials
-// so session-gated academic sites work), and renders every page to a canvas
-// plus an accessible text layer. No highlighting/scan/region-select/sidebar
-// logic here yet — those are later waves (Track C/D/E) building on top of
-// this. overlay.ts's renderHighlightRect exists as a primitive for them but
-// is intentionally not called from here.
+// Custom PDF.js-based viewer. Fetches the PDF, hashes it (document identity
+// is the SHA-256 of the raw bytes, never the URL — see plan), renders every
+// page to canvas + an accessible text layer, then wires together the four
+// Wave-2 tracks built independently against this file's contract:
+//   - scan-controller.ts: auto-scan for confusing text + familiarity slider
+//   - region-select.ts: manual figure/table region highlighting
+//   - sidebar.ts: per-highlight chat panel
+//   - options.ts: settings page (reached via the toolbar link added below)
+// This file is the only place those get wired together — none of the four
+// tracks edit it themselves, by design, to keep their parallel builds
+// conflict-free.
 
 import { getDocument, GlobalWorkerOptions, TextLayer } from "pdfjs-dist";
 import type { PDFPageProxy } from "pdfjs-dist";
+import {
+  createOrGetDocument,
+  getDocument as fetchDocumentRecord,
+} from "../shared/api-client/documents";
+import type { Highlight } from "../shared/types";
+import { renderHighlightRect } from "./overlay";
+import { initScan } from "./scan-controller";
+import { initRegionSelect } from "./region-select";
+import { openSidebar } from "../sidebar/sidebar";
 
 // pdf.worker.mjs is vendored to the extension root by esbuild.config.js and
 // declared in web_accessible_resources so it can be fetched cross-origin
@@ -15,6 +29,7 @@ GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("pdf.worker.mjs");
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const pagesEl = document.getElementById("pages") as HTMLDivElement;
+const toolbarEl = document.getElementById("toolbar") as HTMLDivElement;
 
 function setStatus(message: string, isError = false): void {
   statusEl.textContent = message;
@@ -73,7 +88,25 @@ function extractFileParam(search: string): string | null {
   }
 }
 
-async function renderPage(pdfPage: PDFPageProxy, container: HTMLElement): Promise<void> {
+async function sha256Hex(data: ArrayBuffer): Promise<string> {
+  // Hashing does not transfer/detach `data` (unlike posting it to a Worker,
+  // which is what pdf.js's getDocument({data}) does below) — safe to hash
+  // first, then hand the same buffer to pdf.js afterward.
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+interface RenderedPage {
+  pageNumber: number;
+  page: PDFPageProxy;
+  container: HTMLElement;
+  canvas: HTMLCanvasElement;
+  scale: number;
+}
+
+async function renderPage(pdfPage: PDFPageProxy, container: HTMLElement): Promise<RenderedPage> {
   const viewport = pdfPage.getViewport({ scale: 1.5 });
 
   const pageDiv = document.createElement("div");
@@ -105,9 +138,47 @@ async function renderPage(pdfPage: PDFPageProxy, container: HTMLElement): Promis
     viewport,
   });
   await textLayer.render();
+
+  return {
+    pageNumber: pdfPage.pageNumber,
+    page: pdfPage,
+    container: pageDiv,
+    canvas,
+    scale: viewport.scale,
+  };
+}
+
+/** Redraws an already-persisted region highlight (from a reopened document)
+ * as a clickable overlay rect. `bbox` was stored as CSS-px-at-scale-1 by
+ * region-select.ts (divided by that page's render scale at creation time),
+ * so redrawing it just multiplies back by the current page's scale — see
+ * scan-controller.ts's `toPersistedRect` doc comment for the same
+ * scale-only convention on the text-highlight side. */
+function renderExistingRegionHighlight(highlight: Highlight, page: RenderedPage): void {
+  if (!highlight.bbox) return;
+  const rect = {
+    x: highlight.bbox.x * page.scale,
+    y: highlight.bbox.y * page.scale,
+    w: highlight.bbox.w * page.scale,
+    h: highlight.bbox.h * page.scale,
+  };
+  renderHighlightRect(page.container, rect, () => openSidebar(highlight));
+}
+
+function mountSettingsLink(): void {
+  const link = document.createElement("button");
+  link.type = "button";
+  link.textContent = "⚙ Settings";
+  link.className = "ar-settings-link";
+  link.addEventListener("click", () => {
+    chrome.runtime.openOptionsPage();
+  });
+  toolbarEl.appendChild(link);
 }
 
 async function main(): Promise<void> {
+  mountSettingsLink();
+
   const fileUrl = extractFileParam(window.location.search);
   if (!fileUrl) {
     setStatus("No PDF URL provided (missing ?file= parameter).", true);
@@ -131,22 +202,79 @@ async function main(): Promise<void> {
     return;
   }
 
+  let contentHash: string;
   try {
-    // NOTE for Track C: `data` here transfers/detaches the ArrayBuffer into
-    // the pdf.js worker. If a later wave needs the raw bytes too (e.g. to
-    // compute a content hash), fetch/clone before this call rather than
-    // reading `bytes` afterward.
+    contentHash = await sha256Hex(bytes);
+  } catch (err) {
+    setStatus(`Failed to hash PDF: ${(err as Error).message}`, true);
+    return;
+  }
+
+  try {
+    // getDocument({data: bytes}) transfers/detaches `bytes` into the pdf.js
+    // worker — must come after hashing, never before.
     const loadingTask = getDocument({ data: bytes });
     const pdf = await loadingTask.promise;
 
     setStatus(`Rendering ${pdf.numPages} page(s) …`);
 
+    const renderedPages: RenderedPage[] = [];
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-      const page = await pdf.getPage(pageNumber);
-      await renderPage(page, pagesEl);
+      const pdfPage = await pdf.getPage(pageNumber);
+      renderedPages.push(await renderPage(pdfPage, pagesEl));
     }
 
     hideStatus();
+
+    // Document identity + any previously-created highlights (region-type
+    // ones need manual redraw here; text-type ones are replayed by the scan
+    // endpoint itself — see initScan below).
+    let title: string | undefined;
+    try {
+      const metadata = await pdf.getMetadata();
+      const info = metadata.info as { Title?: string } | undefined;
+      if (info?.Title) title = info.Title;
+    } catch {
+      // Metadata is optional cosmetic data; a failure here must not block
+      // the rest of the flow.
+    }
+
+    const documentRecord = await createOrGetDocument({
+      content_hash: contentHash,
+      title,
+      source_url: fileUrl,
+      page_count: pdf.numPages,
+    });
+
+    const existing = await fetchDocumentRecord(contentHash);
+    if (existing) {
+      const pageByNumber = new Map(renderedPages.map((p) => [p.pageNumber, p]));
+      for (const highlight of existing.highlights) {
+        if (highlight.type !== "region") continue; // text-type: handled by initScan's replay
+        const page = pageByNumber.get(highlight.page_number);
+        if (page) renderExistingRegionHighlight(highlight, page);
+      }
+    }
+
+    const onHighlightClick = (highlight: Highlight): void => openSidebar(highlight);
+
+    // Both consume the same `renderedPages` array — each interface only
+    // requires a subset of its fields (scan needs `page`, region needs
+    // `canvas`; both need `container`/`scale`), which is structurally fine
+    // to pass as-is.
+    void initScan({
+      documentId: documentRecord.id,
+      pages: renderedPages,
+      onHighlightClick,
+    }).catch((err) => {
+      console.error("initScan failed", err);
+    });
+
+    initRegionSelect({
+      documentId: documentRecord.id,
+      pages: renderedPages,
+      onHighlightCreated: onHighlightClick,
+    });
   } catch (err) {
     setStatus(`Failed to render PDF: ${(err as Error).message}`, true);
   }
