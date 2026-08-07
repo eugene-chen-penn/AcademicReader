@@ -4,17 +4,321 @@
     <meta charset="utf-8" />
     <title>AcademicReader Settings</title>
     <style>
+      :root {
+        color-scheme: dark;
+      }
+
       html,
       body {
         margin: 0;
-        padding: 32px;
-        font-family: system-ui, sans-serif;
-        color: #222;
+        padding: 0;
+        background: #17181c;
+        color: #e6e6e9;
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      body {
+        display: flex;
+        justify-content: center;
+        padding: 40px 20px 80px;
+      }
+
+      main {
+        width: 100%;
+        max-width: 640px;
+      }
+
+      h1 {
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+
+      p.subtitle {
+        color: #9a9aa5;
+        margin: 0 0 32px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #d0d0d8;
+      }
+
+      label .optional {
+        font-weight: 400;
+        color: #7d7d88;
+        margin-left: 6px;
+      }
+
+      input[type="text"],
+      input[type="password"] {
+        background: #232429;
+        border: 1px solid #34353c;
+        border-radius: 6px;
+        color: #e6e6e9;
+        font-size: 14px;
+        padding: 10px 12px;
+        font-family: inherit;
+      }
+
+      input[type="text"]:focus,
+      input[type="password"]:focus {
+        outline: none;
+        border-color: #6c8cff;
+      }
+
+      .help {
+        font-size: 12px;
+        color: #8b8b95;
+        line-height: 1.5;
+      }
+
+      .help code {
+        background: #232429;
+        border-radius: 3px;
+        padding: 1px 5px;
+        font-size: 11px;
+      }
+
+      .help.warn {
+        color: #d9a441;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 600;
+        border-radius: 6px;
+        padding: 10px 18px;
+        border: 1px solid transparent;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: #6c8cff;
+        color: #12131a;
+      }
+
+      button.primary:hover {
+        background: #85a0ff;
+      }
+
+      button.secondary {
+        background: transparent;
+        border-color: #3c3d45;
+        color: #e6e6e9;
+      }
+
+      button.secondary:hover {
+        border-color: #6c8cff;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .status {
+        margin-top: 4px;
+        font-size: 13px;
+        padding: 10px 12px;
+        border-radius: 6px;
+        display: none;
+        line-height: 1.5;
+      }
+
+      .status.visible {
+        display: block;
+      }
+
+      .status.ok {
+        background: rgba(70, 180, 120, 0.12);
+        border: 1px solid rgba(70, 180, 120, 0.4);
+        color: #7fd9a8;
+      }
+
+      .status.error {
+        background: rgba(220, 90, 90, 0.12);
+        border: 1px solid rgba(220, 90, 90, 0.4);
+        color: #f2a3a3;
+      }
+
+      .status.info {
+        background: rgba(108, 140, 255, 0.1);
+        border: 1px solid rgba(108, 140, 255, 0.35);
+        color: #aebeff;
+      }
+
+      hr {
+        border: none;
+        border-top: 1px solid #2a2b31;
+        margin: 8px 0;
       }
     </style>
   </head>
   <body>
-    <h1>AcademicReader Settings — coming soon</h1>
+    <main>
+      <h1>AcademicReader Settings</h1>
+      <p class="subtitle">
+        Point AcademicReader at any LLM provider — Anthropic, OpenAI, or a
+        self-hosted / OpenAI-compatible endpoint — by entering your own API
+        key, base URL, and model below.
+      </p>
+
+      <form id="settings-form">
+        <div class="field">
+          <label for="provider">Provider</label>
+          <input
+            type="text"
+            id="provider"
+            name="provider"
+            list="provider-suggestions"
+            placeholder="e.g. anthropic, openai, or a custom provider name"
+            autocomplete="off"
+            required
+          />
+          <datalist id="provider-suggestions">
+            <option value="anthropic"></option>
+            <option value="openai"></option>
+          </datalist>
+          <div class="help">
+            Any provider name litellm understands, or a custom name for a
+            self-hosted endpoint.
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="base-url"
+            >Base URL <span class="optional">(optional)</span></label
+          >
+          <input
+            type="text"
+            id="base-url"
+            name="base_url"
+            placeholder="e.g. https://my-server.example.com/v1"
+            autocomplete="off"
+          />
+          <div class="help">
+            Only needed for a custom / self-hosted OpenAI-compatible
+            endpoint. Leave blank for standard hosted providers like
+            Anthropic or OpenAI.
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="api-key">API Key</label>
+          <input
+            type="password"
+            id="api-key"
+            name="api_key"
+            autocomplete="off"
+          />
+          <div class="help" id="api-key-help">
+            Stored encrypted by the backend. Never returned once saved. The
+            backend has no partial update, so your key must be re-entered on
+            every save — even when you're only changing another field like
+            the model.
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="model">Model</label>
+          <input
+            type="text"
+            id="model"
+            name="model"
+            placeholder="e.g. anthropic/claude-opus-4-6, openai/gpt-5, or openai/<local-model> with a custom Base URL"
+            autocomplete="off"
+            required
+          />
+          <div class="help warn">
+            Must be <strong>provider-prefixed</strong> (e.g.
+            <code>anthropic/claude-opus-4-6</code>,
+            <code>openai/gpt-5</code>). This is passed straight through to
+            litellm — an unprefixed name like <code>gpt-5</code> makes the
+            backend's vision-capability detection silently think the model
+            has no vision support, which later shows up as confusing 422
+            errors when explaining a figure. For a custom OpenAI-compatible
+            endpoint, use <code>openai/&lt;your-model-name&gt;</code>
+            together with a custom Base URL above.
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="vision-model"
+            >Vision Model <span class="optional">(optional)</span></label
+          >
+          <input
+            type="text"
+            id="vision-model"
+            name="vision_model"
+            placeholder="e.g. anthropic/claude-opus-4-6, openai/gpt-5"
+            autocomplete="off"
+          />
+          <div class="help">
+            Used for explaining figures/tables — leave blank to reuse Model
+            above if it supports vision. Must also be provider-prefixed (see
+            above).
+          </div>
+        </div>
+
+        <div class="status" id="save-status"></div>
+
+        <div class="actions">
+          <button type="submit" class="primary" id="save-button">Save</button>
+        </div>
+
+        <hr />
+
+        <div class="actions">
+          <button
+            type="button"
+            class="secondary"
+            id="test-button"
+            disabled
+            title="Save your settings first — Test uses whatever is currently saved on the backend."
+          >
+            Test Connection
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            id="test-vision-button"
+            disabled
+            title="Save your settings first — Test uses whatever is currently saved on the backend."
+          >
+            Test Vision
+          </button>
+        </div>
+        <div class="status" id="test-status"></div>
+        <div class="status" id="test-vision-status"></div>
+      </form>
+    </main>
     <script type="module" src="options.js"></script>
   </body>
 </html>
