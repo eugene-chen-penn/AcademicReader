@@ -69,6 +69,14 @@ def test_has_vision_capability_no_model_at_all():
     assert has_vision_capability({"model": None, "vision_model": None}) is False
 
 
+def test_has_vision_capability_gemini_supports_vision():
+    assert has_vision_capability({"model": "gemini/gemini-2.5-pro", "vision_model": None}) is True
+
+
+def test_has_vision_capability_deepseek_has_no_vision():
+    assert has_vision_capability({"model": "deepseek/deepseek-chat", "vision_model": None}) is False
+
+
 # ---- call_llm against a real temp db, using litellm's own mock_response mode ----
 
 
