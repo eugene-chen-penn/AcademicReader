@@ -294,7 +294,19 @@ function ensureDom(): SidebarDom {
 // throw and abort the whole message's formatting.
 function renderMath(container: HTMLElement, tex: string, displayMode: boolean): void {
   const span = document.createElement("span");
-  katex.render(tex, span, { throwOnError: false, displayMode });
+  try {
+    // throwOnError: false only suppresses KaTeX's own ParseError (invalid
+    // TeX syntax) by rendering a red inline error span instead — it does
+    // NOT make katex.render unconditionally non-throwing (e.g. a stack
+    // overflow from pathological nesting can still throw a plain Error).
+    // This try/catch is the actual backstop: one bad expression must
+    // degrade to showing its literal source, not propagate up through
+    // onDelta -> chatStream -> postMessage and wipe out the whole reply
+    // (sidebar's .catch() there removes the entire in-progress bubble).
+    katex.render(tex, span, { throwOnError: false, displayMode });
+  } catch {
+    span.textContent = displayMode ? `$$${tex}$$` : `$${tex}$`;
+  }
   container.appendChild(span);
 }
 

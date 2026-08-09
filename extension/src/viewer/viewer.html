@@ -16,19 +16,33 @@
         font-family: system-ui, sans-serif;
       }
 
-      /* Sticky wrapper around #status + #toolbar so they stick to the
-         viewport top as one unit while scrolling through #pages below,
-         WITHOUT any hardcoded pixel offset between them. (A previous
-         version fixed #toolbar at a hardcoded `top: 32px` to clear
-         #status's height -- but #status is hidden via `display: none` once
-         the PDF finishes loading, so #toolbar stayed stuck 32px below the
-         top forever after that, with nothing filling the gap above it.
-         Stacking both inside one sticky flex column means the layout
-         reflows itself correctly whenever #status's visibility changes, no
-         magic numbers to keep in sync.) */
+      /* Fixed wrapper around #status + #toolbar so they stay pinned to the
+         viewport top edge-to-edge (left:0/right:0), same guarantee the old
+         per-element `position: fixed` had, regardless of any horizontal
+         scroll a wide PDF page might cause. (`position: sticky` was tried
+         first here, but sticky only pins the axis you give it an offset
+         for -- `top` -- and lets the element scroll normally along the
+         other axis, so on a page wide enough to need horizontal scrolling
+         the toolbar would slide off to the side. Fixed + explicit
+         left:0/right:0 avoids that.)
+         A previous version fixed #toolbar at a hardcoded `top: 32px` to
+         clear #status's height -- but #status is hidden via
+         `display: none` once the PDF finishes loading, so #toolbar stayed
+         stuck 32px below the top forever after that, with nothing filling
+         the gap above it. Stacking both inside one fixed flex column at
+         top:0 fixes THAT bug (no per-element top offset to go stale), but
+         since #topbar is removed from normal flow (`position: fixed`),
+         #pages still needs its own clearance kept in sync with #topbar's
+         actual rendered height -- see viewer.ts's ResizeObserver on
+         #topbar, which sets #pages's padding-top dynamically instead of a
+         hardcoded number that would only be correct for one specific
+         combination of status-visible/hidden and toolbar-controls-mounted
+         states. */
       #topbar {
-        position: sticky;
+        position: fixed;
         top: 0;
+        left: 0;
+        right: 0;
         z-index: 999;
         display: flex;
         flex-direction: column;
@@ -86,9 +100,11 @@
         flex-direction: column;
         align-items: center;
         gap: 12px;
-        /* No top padding needed: #topbar is a normal (sticky, not fixed)
-           flow element directly above this one now, so it already reserves
-           its own space -- see #topbar's comment above. */
+        /* padding-top is set dynamically by viewer.ts's ResizeObserver on
+           #topbar (which is `position: fixed`, so removed from flow and
+           doesn't reserve space here on its own) -- this 24px is just the
+           bottom padding plus a same-value fallback in case that JS
+           somehow never runs. */
         padding: 24px 0;
       }
 

@@ -176,8 +176,30 @@ function mountSettingsLink(): void {
   toolbarEl.appendChild(link);
 }
 
+/**
+ * Keeps #pages's top padding equal to #topbar's actual rendered height.
+ * #topbar is `position: fixed` (see viewer.html's comment on it), so it's
+ * removed from normal flow and #pages must reserve space for it manually
+ * -- a hardcoded pixel value would only be correct for one specific
+ * combination of #status being visible/hidden and whichever toolbar
+ * controls happen to be mounted (the settings link mounts synchronously
+ * here, but the familiarity slider mounts later, asynchronously, from
+ * scan-controller.ts). A ResizeObserver reacts to both, and to #status's
+ * hide/show, without either module needing to know about #pages at all.
+ */
+function watchTopbarHeight(): void {
+  const topbarEl = document.getElementById("topbar");
+  if (!topbarEl) return;
+  const sync = (): void => {
+    pagesEl.style.paddingTop = `${topbarEl.offsetHeight}px`;
+  };
+  new ResizeObserver(sync).observe(topbarEl);
+  sync();
+}
+
 async function main(): Promise<void> {
   mountSettingsLink();
+  watchTopbarHeight();
 
   const fileUrl = extractFileParam(window.location.search);
   if (!fileUrl) {
