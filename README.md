@@ -10,10 +10,11 @@ chat. The backend runs locally on your machine and talks to whatever LLM API you
 Grab the latest [release](../../releases/latest) — it ships a prebuilt extension so you don't
 need Node/npm at all:
 
-1. **Start the backend** — download `start-backend.sh` from the release (or use the copy in this
-   repo at `scripts/start-backend.sh`) and run it:
+1. **Start the backend** — download `start-backend.sh` from the release and run it with `bash`
+   (browsers strip the executable bit from downloaded files, so a plain `./start-backend.sh`
+   will fail with "permission denied"):
    ```
-   ./start-backend.sh
+   bash start-backend.sh
    ```
    This installs `uv` if you don't have it, installs Python deps, and starts the server on
    `http://127.0.0.1:8721`. Leave the terminal open.
