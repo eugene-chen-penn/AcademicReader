@@ -95,6 +95,11 @@ export interface MatchedItemRange {
   charStart: number;
   /** Char offset into normalizedText (exclusive), clipped to this item's own range. */
   charEnd: number;
+  /** This item's own `start` offset into normalizedText (i.e. the matching
+   * indexMap entry's `start`), so matchedRangesToRects can recover
+   * charStart/charEnd as LOCAL offsets into `item.str` (charStart - itemStart)
+   * without needing indexMap threaded through as a second parameter. */
+  itemStart: number;
 }
 
 /**
@@ -140,7 +145,7 @@ export function resolveQuote(
     const overlapStart = Math.max(entry.start, matchStart);
     const overlapEnd = Math.min(entry.end, matchEnd);
     if (overlapStart < overlapEnd) {
-      ranges.push({ itemIndex: entry.itemIndex, charStart: overlapStart, charEnd: overlapEnd });
+      ranges.push({ itemIndex: entry.itemIndex, charStart: overlapStart, charEnd: overlapEnd, itemStart: entry.start });
     }
   }
 
@@ -166,7 +171,13 @@ export interface PixelRect {
 }
 
 /**
- * Computes a TextItem's axis-aligned bounding box in PDF user-space units.
+ * Computes the axis-aligned bounding box, in PDF user-space units, of just
+ * the [localStart, localEnd) character range WITHIN a TextItem's own
+ * `str` -- not the whole item. This is what actually fixes highlights
+ * covering an entire line: pdf.js text items routinely span a whole line
+ * (or more) of a PDF's content stream, so boxing the whole item for a
+ * quote that only matched a few words inside it drew a rect over
+ * everything else on that line too.
  *
  * `item.transform`'s `[a, b, c, d]` already bakes in the font size (verified
  * empirically: rendering a hand-built PDF with a 24pt font produced
@@ -175,21 +186,47 @@ export interface PixelRect {
  * not glyph-space units awaiting a further multiply-by-fontSize). So naively
  * feeding `[0, 0, width, height]` through the *raw* transform (e.g. via
  * `Util.getAxialAlignedBoundingBox([0, 0, item.width, item.height],
- * item.transform)`, which looks like the obvious pdf.js-native move and is
- * how earlier drafts of this function did it) double-counts that scaling
- * and inflates the box by roughly the font size. The fix: strip the
- * magnitude from `[a,b]`/`[c,d]`, keeping only their *direction* (so a
- * rotated/skewed item still gets a correctly-oriented box), and apply
- * `width`/`height` against those unit vectors plus the item's origin
- * `(e, f)` instead.
+ * item.transform)`, which looks like the obvious pdf.js-native move) double-
+ * counts that scaling and inflates the box by roughly the font size. The
+ * fix: strip the magnitude from `[a,b]`/`[c,d]`, keeping only their
+ * *direction* (so a rotated/skewed item still gets a correctly-oriented
+ * box), and apply width/height against those unit vectors plus the item's
+ * origin `(e, f)` instead.
+ *
+ * Sub-range limitation: pdf.js's `getTextContent()` doesn't expose
+ * per-character widths, only the item's total `width` for its whole `str`.
+ * This approximates each character as an equal fraction of that total width
+ * (i.e. treats the item as monospaced for this purpose) to find where the
+ * substring starts/ends along the item's text-direction axis. That's wrong
+ * for proportional fonts at the glyph level, but bounds the highlight to
+ * approximately the right words instead of the entire line/item, which is
+ * the actual bug being fixed here. When [localStart, localEnd) covers the
+ * whole item (the common case for a fully-matched item), this reduces to
+ * exactly the old whole-item box -- no regression there.
  */
-function itemBBoxPdfSpace(item: TextItem): [number, number, number, number] {
+function itemSubstringBBoxPdfSpace(
+  item: TextItem,
+  localStart: number,
+  localEnd: number,
+): [number, number, number, number] {
+  const totalLen = item.str.length || 1;
+  const clampedStart = Math.max(0, Math.min(localStart, totalLen));
+  const clampedEnd = Math.max(clampedStart, Math.min(localEnd, totalLen));
+
   const [a, b, c, d, e, f] = item.transform;
   const xAxisLen = Math.hypot(a, b) || 1;
   const yAxisLen = Math.hypot(c, d) || 1;
-  const directionTransform = [a / xAxisLen, b / xAxisLen, c / yAxisLen, d / yAxisLen, e, f];
+  const xUnit: [number, number] = [a / xAxisLen, b / xAxisLen];
+  const yUnit: [number, number] = [c / yAxisLen, d / yAxisLen];
+
+  const widthAtStart = (clampedStart / totalLen) * item.width;
+  const widthAtEnd = (clampedEnd / totalLen) * item.width;
+  const subOrigin: [number, number] = [e + xUnit[0] * widthAtStart, f + xUnit[1] * widthAtStart];
+  const subWidth = widthAtEnd - widthAtStart;
+
+  const directionTransform = [xUnit[0], xUnit[1], yUnit[0], yUnit[1], subOrigin[0], subOrigin[1]];
   const [xMin, yMin, xMax, yMax] = Util.getAxialAlignedBoundingBox(
-    [0, 0, item.width, item.height],
+    [0, 0, subWidth, item.height],
     directionTransform,
   ) as [number, number, number, number];
   return [xMin, yMin, xMax, yMax];
@@ -259,7 +296,9 @@ export function matchedRangesToRects(
       console.warn(`matchedRangesToRects: no item at index ${range.itemIndex}, skipping`);
       continue;
     }
-    const pdfRect = itemBBoxPdfSpace(item);
+    const localStart = range.charStart - range.itemStart;
+    const localEnd = range.charEnd - range.itemStart;
+    const pdfRect = itemSubstringBBoxPdfSpace(item, localStart, localEnd);
     itemRects.push({ itemIndex: range.itemIndex, cssRect: pdfRectToCssPx(pdfRect, viewportTransform) });
   }
   if (itemRects.length === 0) return [];

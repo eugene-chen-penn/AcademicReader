@@ -58,7 +58,8 @@ host the first time you save, since only the four providers above are pre-author
 Your API key is stored via `chrome.storage.local`, isolated to this extension and never sent
 anywhere except directly to the provider you configure, over HTTPS. It is not encrypted at rest —
 Chrome doesn't encrypt extension storage — but it's inaccessible to web pages and other
-extensions. Re-enter it on every Settings save; there's no partial update.
+extensions. Leave the API Key field blank when saving to keep your existing key; it's only
+required the first time or when you're actually changing it.
 
 ## What auto-detects vs. needs the manual button
 

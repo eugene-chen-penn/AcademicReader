@@ -4,14 +4,11 @@
 // model — stored via chrome.storage.local and called directly from
 // extension pages (see shared/settings-store.ts, shared/llm/).
 //
-// Blank-key-on-save decision: updateSettings() writes the whole settings
-// object at once (no partial-update API) — provider/api_key/model are all
-// required on every save, even to change just the model. Rather than
-// invent partial-update semantics, this page requires the user to
-// re-enter their API key on every save. If the key field is blank, Save is
-// blocked with an inline error instead of silently sending an empty string
-// that would overwrite a working key. This is the simpler and safer of the
-// two options called out in the spec.
+// Blank-key-on-save decision: leaving the API key field blank on Save
+// keeps whatever key is already stored (updateSettings() in
+// shared/api-client/settings.ts handles the fallback) — so changing just
+// the model/provider/base URL doesn't require re-pasting the key. A blank
+// key is only rejected when nothing is stored yet (first-time setup).
 //
 // Test button decision: Test Connection / Test Vision are disabled until
 // this page knows settings have actually been saved (either api_key_set was
@@ -73,7 +70,7 @@ function applySettings(settings: SettingsInfo) {
 
   apiKeyInput.value = "";
   if (settings.api_key_set) {
-    apiKeyInput.placeholder = "•••• saved — re-enter to save any change";
+    apiKeyInput.placeholder = "•••• saved — leave blank to keep it";
   } else {
     apiKeyInput.placeholder = "Paste your API key";
   }
@@ -130,11 +127,11 @@ form.addEventListener("submit", async (event) => {
     modelInput.focus();
     return;
   }
-  if (!apiKey) {
+  if (!apiKey && !hasSavedSettings) {
     setStatus(
       saveStatus,
       "error",
-      "API key is required to save (there is no partial update) — please re-enter it, even if you're only changing another field.",
+      "API key is required — none is currently saved.",
     );
     apiKeyInput.focus();
     return;
@@ -146,7 +143,7 @@ form.addEventListener("submit", async (event) => {
   try {
     const updated = await updateSettings({
       provider,
-      api_key: apiKey,
+      api_key: apiKey || undefined, // blank = keep the existing stored key
       base_url: baseUrl || undefined,
       model,
       vision_model: visionModel || undefined,

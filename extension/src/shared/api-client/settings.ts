@@ -54,15 +54,30 @@ export async function getSettings(): Promise<SettingsInfo> {
 
 export async function updateSettings(input: {
   provider: string;
-  api_key: string;
+  // Omitted/blank keeps whatever API key is already stored (a real partial
+  // update, unlike the old backend-backed version — chrome.storage.local
+  // has no such restriction, so there's no reason to force re-entry on
+  // every save anymore). Only required the first time, when nothing is
+  // stored yet.
+  api_key?: string;
   base_url?: string;
   model: string;
   vision_model?: string;
 }): Promise<SettingsInfo> {
   await ensureOriginPermission(input.base_url);
+
+  let apiKey = input.api_key || null;
+  if (!apiKey) {
+    const existing = await getStoredSettings();
+    apiKey = existing.api_key;
+  }
+  if (!apiKey) {
+    throw new Error("API key is required — none is currently saved.");
+  }
+
   const stored: StoredSettings = {
     provider: input.provider,
-    api_key: input.api_key,
+    api_key: apiKey,
     base_url: input.base_url ?? null,
     model: input.model,
     vision_model: input.vision_model ?? null,
