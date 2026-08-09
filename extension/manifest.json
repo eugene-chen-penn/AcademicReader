@@ -62,7 +62,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["viewer.html", "viewer.js", "pdf.worker.mjs"],
+      "resources": ["viewer.html", "viewer.js", "viewer.css", "pdf.worker.mjs"],
       "matches": ["<all_urls>"]
     }
   ]

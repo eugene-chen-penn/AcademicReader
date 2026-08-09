@@ -27,6 +27,15 @@ const buildOptions = {
   outdir: "dist",
   sourcemap: true,
   logLevel: "info",
+  // KaTeX's stylesheet (imported from sidebar.ts for LaTeX rendering)
+  // references its own webfonts via CSS url(...). Inlining them as data
+  // URLs avoids needing to separately copy font files into dist/ and
+  // declare them in manifest.json's web_accessible_resources.
+  loader: {
+    ".woff2": "dataurl",
+    ".woff": "dataurl",
+    ".ttf": "dataurl",
+  },
 };
 
 function copyStaticAssets() {

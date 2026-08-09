@@ -21,6 +21,12 @@
 // of the "escape, then apply minimal safe transforms" approach, since there
 // is no HTML string at any point for a transform to (mis)parse.
 
+import katex from "katex";
+// A plain bundler-level CSS import (esbuild extracts this into a sibling
+// dist/viewer.css, unlike the `with { type: "text" }` import-attribute
+// form mentioned below for sidebar's own CSS, which esbuild 0.24 rejects) —
+// see viewer.html's <link rel="stylesheet" href="viewer.css">.
+import "katex/dist/katex.min.css";
 import type { Highlight, Message } from "../shared/types";
 import { listMessages, postMessage } from "../shared/api-client/messages";
 
@@ -279,13 +285,38 @@ function ensureDom(): SidebarDom {
   return built;
 }
 
-// Walks `raw` and appends plain text / <br> / <code> / <strong> nodes
-// directly to `container` for a tiny subset of markdown-ish syntax. Never
-// builds or parses an HTML string, so there is no injection surface even
-// though the source text (model output, or the user's own typed text) is
-// fully untrusted.
+// Renders `tex` via KaTeX into a freshly-created <span> appended to
+// `container`. `throwOnError: false` makes KaTeX render a red inline error
+// span instead of throwing on invalid syntax — essential here since this
+// runs on every streamed delta, so a math expression that's still
+// mid-stream (e.g. an unclosed \frac{) is temporarily "invalid" until the
+// rest of it arrives; it must degrade to a visible-but-ugly render, not
+// throw and abort the whole message's formatting.
+function renderMath(container: HTMLElement, tex: string, displayMode: boolean): void {
+  const span = document.createElement("span");
+  katex.render(tex, span, { throwOnError: false, displayMode });
+  container.appendChild(span);
+}
+
+// Walks `raw` and appends plain text / <br> / <code> / <strong> / KaTeX
+// math nodes directly to `container` for a tiny subset of markdown-ish
+// syntax plus LaTeX math delimiters. Never builds or parses an HTML
+// string, so there is no injection surface even though the source text
+// (model output, or the user's own typed text) is fully untrusted — KaTeX
+// itself does construct HTML internally for the rendered math, but that's
+// well-audited third-party library code rendering syntactic TeX, not raw
+// user/model text passed through as markup.
+//
+// Math delimiters checked (display forms listed before the single-`$`
+// inline form so e.g. `$$x$$` matches as one display block rather than two
+// empty-ish inline matches): `$$...$$` and `\[...\]` (display), `\(...\)`
+// and `$...$` (inline). The single-`$` form additionally requires its
+// content not start/end with whitespace (KaTeX's own recommended
+// heuristic) to cut down on false positives like "$100 and $200" being
+// misread as inline math.
 function appendFormattedText(container: HTMLElement, raw: string): void {
-  const pattern = /\n|`([^`]+)`|\*\*([^*]+)\*\*/g;
+  const pattern =
+    /\n|`([^`]+)`|\*\*([^*]+)\*\*|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?!\s)([^\n$]+?)(?<!\s)\$/g;
   let lastIndex = 0;
   for (const match of raw.matchAll(pattern)) {
     const index = match.index ?? 0;
@@ -302,6 +333,14 @@ function appendFormattedText(container: HTMLElement, raw: string): void {
       const strong = document.createElement("strong");
       strong.textContent = match[2];
       container.appendChild(strong);
+    } else if (match[3] !== undefined) {
+      renderMath(container, match[3], true);
+    } else if (match[4] !== undefined) {
+      renderMath(container, match[4], true);
+    } else if (match[5] !== undefined) {
+      renderMath(container, match[5], false);
+    } else if (match[6] !== undefined) {
+      renderMath(container, match[6], false);
     }
     lastIndex = index + match[0].length;
   }
