@@ -5,7 +5,32 @@ lets you drag-select figures/tables for explanation, and gives each highlight it
 chat. The backend runs locally on your machine and talks to whatever LLM API you configure
 (Anthropic, OpenAI, or any OpenAI-compatible endpoint).
 
-## Running it (on your own machine, not a remote dev box)
+## Quick install (recommended)
+
+Grab the latest [release](../../releases/latest) — it ships a prebuilt extension so you don't
+need Node/npm at all:
+
+1. **Start the backend** — download `start-backend.sh` from the release (or use the copy in this
+   repo at `scripts/start-backend.sh`) and run it:
+   ```
+   ./start-backend.sh
+   ```
+   This installs `uv` if you don't have it, installs Python deps, and starts the server on
+   `http://127.0.0.1:8721`. Leave the terminal open.
+2. **Load the extension** — download `academicreader-extension.zip` from the release, unzip it,
+   then in Chrome go to `chrome://extensions`, enable **Developer mode** (top-right toggle), click
+   **Load unpacked**, and select the unzipped folder.
+
+   Chrome does not allow one-click installation of extensions from outside the Web Store — this
+   Developer-mode step is a deliberate Chrome security boundary, not something this project can
+   skip.
+3. **Configure your LLM** — right-click the extension icon → **Options**, and set your
+   provider/model/API key (see [below](#running-it-from-source)) before scanning or chatting.
+
+To update later, repeat step 2 with the new release's zip (remove the old unpacked extension
+first via `chrome://extensions`).
+
+## Running it from source (on your own machine, not a remote dev box)
 
 **Backend:**
 ```
