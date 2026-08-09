@@ -1,10 +1,10 @@
 // Orchestrates the auto-scan flow: pulls text out of each rendered page,
-// sends it to the backend /scan endpoint, resolves each returned quote to
-// on-page rects, renders them via overlay.ts's renderHighlightRect, persists
-// the resolved rects back to the backend, and mounts the familiarity slider
-// into #toolbar. Not wired into viewer.ts yet -- that's a later integration
-// step by someone else; this module is self-contained and only touches the
-// `container` elements handed to it via PageRenderInfo plus #toolbar.
+// sends it to the local scan flow (shared/api-client/scan.ts), resolves
+// each returned quote to on-page rects, renders them via overlay.ts's
+// renderHighlightRect, persists the resolved rects back to storage, and
+// mounts the familiarity slider into #toolbar. This module is
+// self-contained and only touches the `container` elements handed to it
+// via PageRenderInfo plus #toolbar.
 
 import type { PDFPageProxy } from "pdfjs-dist";
 import type { Highlight } from "../shared/types";
@@ -181,11 +181,11 @@ async function buildPageContexts(pages: PageRenderInfo[]): Promise<Map<number, P
 
 /**
  * Converts a CSS-px rect (at whatever `scale` this page was rendered at)
- * into resolution-independent units by dividing out that scale, per the
- * backend PATCH contract ("rects, not CSS px" -- see spec).
+ * into resolution-independent units by dividing out that scale, per
+ * patchHighlightRects's contract ("rects, not CSS px" -- see spec).
  *
  * Precision note for whoever re-renders these later (e.g. reading them back
- * via `GET /documents/{content_hash}`): what's stored here is CSS-px
+ * via `getDocument(contentHash)`): what's stored here is CSS-px
  * measured at scale=1 -- top-left origin, y increasing downward -- NOT true
  * PDF user-space (which is bottom-left origin, y increasing upward). The
  * y-flip already happened inside matchedRangesToRects (via the viewport
@@ -235,8 +235,8 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
       return;
     }
 
-    // Persisted/"PDF-user-space" units per the backend PATCH contract, but
-    // see toPersistedRect's doc comment: this is really CSS-px-at-scale-1
+    // Persisted/"PDF-user-space" units per patchHighlightRects's contract,
+    // but see toPersistedRect's doc comment: this is really CSS-px-at-scale-1
     // (top-left origin, y-down), not true bottom-left-origin PDF user
     // space -- the y-flip is already baked in and dividing by scale just
     // undoes the zoom multiplication, not the flip. Computed once and

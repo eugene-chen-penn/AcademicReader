@@ -1,6 +1,8 @@
-// MV3 service worker. Effectively stateless — all real state lives in the
-// backend (built by a sibling agent); this only handles the manual-trigger
-// toolbar-click fallback (chrome.action.onClicked) for academic sites that
+// MV3 service worker. Effectively stateless — all real state lives in
+// IndexedDB/chrome.storage.local (see shared/db.ts, shared/settings-store.ts),
+// accessed directly from extension pages, never from this service worker.
+// This only handles the manual-trigger toolbar-click fallback
+// (chrome.action.onClicked) for academic sites that
 // DON'T have a static declarativeNetRequest redirect rule in rules.json,
 // because they don't expose a predictable PDF URL shape DNR could match on
 // (DNR only ever sees the URL, never Content-Type). Of the domains granted

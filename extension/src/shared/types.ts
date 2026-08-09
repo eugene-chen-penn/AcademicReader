@@ -1,6 +1,6 @@
-// Shared TypeScript types mirroring the backend's pydantic response shapes.
-// Field names MUST stay in sync with backend/ (built by a sibling agent
-// against this exact contract) — do not rename without coordinating there.
+// Shared TypeScript types for the API-facing shapes the UI code works with.
+// Field names MUST stay in sync with shared/highlight-mapper.ts and
+// shared/db.ts, which construct these from IndexedDB storage records.
 
 export type Document = {
   id: number;

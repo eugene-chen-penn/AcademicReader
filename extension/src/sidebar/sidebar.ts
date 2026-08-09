@@ -24,8 +24,6 @@
 import type { Highlight, Message } from "../shared/types";
 import { listMessages, postMessage } from "../shared/api-client/messages";
 
-const BACKEND_BASE = "http://localhost:8721";
-
 const SIDEBAR_CSS = `
 #sidebar-root {
   display: flex;
@@ -338,7 +336,9 @@ function renderHeader(highlight: Highlight): void {
   } else {
     const img = document.createElement("img");
     img.className = "ar-sidebar-thumb";
-    img.src = `${BACKEND_BASE}${highlight.crop_image_url ?? ""}`;
+    // crop_image_url is already a ready-to-use blob: URL (see
+    // shared/highlight-mapper.ts) — no backend host to prefix anymore.
+    img.src = highlight.crop_image_url ?? "";
     img.alt = "Selected figure or table region";
     headerContent.appendChild(img);
   }
@@ -385,7 +385,7 @@ async function loadThread(highlight: Highlight, token: number): Promise<void> {
     if (messages.length === 0) {
       // First click on this highlight: render the auto-composed question
       // immediately for instant feedback, then kick off the real request
-      // (the backend independently composes + persists the same text as
+      // (postMessage independently composes + persists the same text as
       // the actual user message — this is purely a client-side echo).
       addBubble("user", firstQuestionText(highlight));
       const assistantBubble = addBubble("assistant", "", true);
@@ -462,8 +462,8 @@ function handleSend(): void {
 // highlight that's already showing just re-reveals the panel without
 // touching the thread (so it doesn't interrupt an in-flight stream or
 // re-fetch redundantly); opening a different highlight always tears down
-// and re-fetches from the backend (source of truth) rather than reusing
-// any client-side cache.
+// and re-fetches from storage (source of truth) rather than reusing any
+// client-side cache.
 export function openSidebar(highlight: Highlight): void {
   const { root } = ensureDom();
   root.style.display = "flex";

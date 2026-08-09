@@ -1,15 +1,12 @@
 // Manual figure/table region-select tool. Lets the user drag a box over a
-// rendered PDF page to crop it and send it to the backend as a "region"
-// highlight, then hands the created Highlight back to the caller so a later
-// integration step can open the sidebar chat for it.
+// rendered PDF page to crop it and persist it as a "region" highlight (via
+// shared/api-client/highlights.ts), then hands the created Highlight back
+// to the caller so it can open the sidebar chat for it.
 //
-// Not wired into viewer.ts here — a later integration step calls
-// initRegionSelect() with the already-rendered pages (see PageRenderInfo
-// below: `deps.pages` is a snapshot taken at init time, so the integrator
-// must call initRegionSelect() only after all pages have been rendered, or
-// re-call it if pages are added later). This file only owns the toggle
-// button, the drag interaction, the crop math, and the highlight POST; it
-// does not touch viewer.ts/overlay.ts/manifest.json/viewer.html.
+// viewer.ts calls initRegionSelect() with the already-rendered pages (see
+// PageRenderInfo below: `deps.pages` is a snapshot taken at init time, so
+// the caller must call initRegionSelect() only after all pages have been
+// rendered, or re-call it if pages are added later).
 
 import type { Highlight } from "../shared/types";
 import { createRegionHighlight } from "../shared/api-client/highlights";
@@ -233,10 +230,10 @@ async function finalizeSelection(
 
     // PDF user-space is bottom-left-origin/y-up; this is a plain top-left
     // CSS-px divide-by-scale per the spec, so the resulting bbox is
-    // top-left-origin/y-down. Nothing server-side currently re-renders from
-    // `bbox` (the crop PNG is generated and uploaded here, not derived from
-    // bbox by the backend), so this is a non-issue today — flagged for
-    // whoever eventually needs bbox in true PDF coordinate space.
+    // top-left-origin/y-down. Nothing currently re-renders from `bbox`
+    // (the crop PNG is generated and stored here directly, never derived
+    // from bbox), so this is a non-issue today — flagged for whoever
+    // eventually needs bbox in true PDF coordinate space.
     const pdfRect = {
       x: canvasCssRect.x / page.scale,
       y: canvasCssRect.y / page.scale,

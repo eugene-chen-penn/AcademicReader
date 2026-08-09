@@ -1,9 +1,10 @@
 // Pure(ish) text-anchoring logic: turns a page's pdf.js text items into one
-// normalized string (what we send to the backend /scan endpoint), and can
-// resolve a `quoted_text` span the backend echoes back into the character
-// range(s) of the item(s) that produced it, and from there into on-page CSS
-// pixel rects. No DOM dependency except the rect-conversion step, which
-// needs a PDFPageProxy to build a viewport (see resolveQuoteToRects).
+// normalized string (what gets sent to the scan flow, shared/api-client/
+// scan.ts), and can resolve a `quoted_text` span the scan flow echoes back
+// into the character range(s) of the item(s) that produced it, and from
+// there into on-page CSS pixel rects. No DOM dependency except the
+// rect-conversion step, which needs a PDFPageProxy to build a viewport (see
+// resolveQuoteToRects).
 //
 // Not wired into viewer.ts yet; scan-controller.ts is the only consumer.
 
@@ -44,13 +45,13 @@ export interface ExtractedPageText {
  * whitespace, so wrapped lines read as continuous prose for the LLM instead
  * of one run-on word-jammed line per page.
  *
- * Deliberately a space, not a literal `\n`: the backend's exact-substring
- * match (`backend/app/services/text_context.py::extract_context`, a plain
- * `str.find()`, no whitespace normalization) means whatever separator we
- * put here must byte-for-byte match what the LLM echoes back in
- * `quoted_text`, or the finding is silently dropped server-side before we
- * ever see it (`if ctx is None: continue` in the scan router) -- we won't
- * even get an `error` event to notice. The scan prompt tells the model
+ * Deliberately a space, not a literal `\n`: extractContext's exact-substring
+ * match (`shared/text-context.ts`, a plain `indexOf()`, no whitespace
+ * normalization) means whatever separator we put here must byte-for-byte
+ * match what the LLM echoes back in `quoted_text`, or the finding is
+ * silently dropped in scan.ts before we ever see it (`if (!ctx) continue`)
+ * -- we won't even get an `error` event to notice. The scan prompt tells
+ * the model
  * "never alter whitespace, casing, or punctuation," but a hard `\n` in the
  * *middle* of what reads as one sentence (typical for a wrapped PDF line)
  * is exactly the kind of incidental formatting an LLM is prone to normalize
@@ -103,9 +104,10 @@ export interface MatchedItemRange {
  * `console.warn`) if not found -- callers should skip that span, not
  * throw, since one bad span must not abort a whole scan.
  *
- * The backend guarantees quoted_text is an exact substring of the page
- * text *it* was given -- which is this same normalizedText, since the
- * caller sends exactly what extractPageText produced. So a miss here
+ * extractContext (shared/text-context.ts) guarantees quoted_text is an
+ * exact substring of the page text *it* was given -- which is this same
+ * normalizedText, since the caller sends exactly what extractPageText
+ * produced. So a miss here
  * would mean either: the client re-derives normalizedText differently
  * than what it originally sent (a bug to fix, not paper over), or a
  * genuine edge case (e.g. duplicate normalization / re-scan after the

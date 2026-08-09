@@ -1,22 +1,24 @@
-// AcademicReader options page. Lets the user point the backend at any LLM
-// provider (Anthropic, OpenAI, or a self-hosted/OpenAI-compatible endpoint)
-// by entering their own API key, base URL, and model.
+// AcademicReader options page. Lets the user point this extension at any
+// LLM provider (Anthropic, OpenAI, Google, DeepSeek, or a self-hosted/
+// OpenAI-compatible endpoint) by entering their own API key, base URL, and
+// model — stored via chrome.storage.local and called directly from
+// extension pages (see shared/settings-store.ts, shared/llm/).
 //
-// Blank-key-on-save decision: the backend's PUT /settings has no partial-
-// update semantics — provider/api_key/model are all required on every
-// request, even to change just the model. Rather than invent a fake
-// partial-update behavior, this page requires the user to re-enter their
-// API key on every save. If the key field is blank, Save is blocked with an
-// inline error instead of silently sending an empty string that would
-// overwrite a working key. This is the simpler and safer of the two options
-// called out in the spec.
+// Blank-key-on-save decision: updateSettings() writes the whole settings
+// object at once (no partial-update API) — provider/api_key/model are all
+// required on every save, even to change just the model. Rather than
+// invent partial-update semantics, this page requires the user to
+// re-enter their API key on every save. If the key field is blank, Save is
+// blocked with an inline error instead of silently sending an empty string
+// that would overwrite a working key. This is the simpler and safer of the
+// two options called out in the spec.
 //
 // Test button decision: Test Connection / Test Vision are disabled until
 // this page knows settings have actually been saved (either api_key_set was
 // already true on load, or a save just succeeded in this session) — since
-// both test endpoints operate on whatever's currently persisted in the
-// backend, testing before anything is saved would just return a
-// "not configured" style failure.
+// both test calls operate on whatever's currently persisted, testing
+// before anything is saved would just return a "not configured" style
+// failure.
 
 import {
   getSettings,
@@ -85,7 +87,7 @@ function updateTestButtonsEnabled() {
   testVisionButton.disabled = !hasSavedSettings;
   const title = hasSavedSettings
     ? ""
-    : "Save your settings first — Test uses whatever is currently saved on the backend.";
+    : "Save your settings first — Test uses whatever is currently saved.";
   testButton.title = title;
   testVisionButton.title = title;
 }
@@ -132,7 +134,7 @@ form.addEventListener("submit", async (event) => {
     setStatus(
       saveStatus,
       "error",
-      "API key is required to save. The backend requires the key on every save (there is no partial update) — please re-enter it, even if you're only changing another field.",
+      "API key is required to save (there is no partial update) — please re-enter it, even if you're only changing another field.",
     );
     apiKeyInput.focus();
     return;

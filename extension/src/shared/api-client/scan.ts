@@ -1,16 +1,18 @@
-// Scan + highlight-persistence backend API calls. Sibling to documents.ts;
-// follows the same plain-fetch, throw-on-non-ok style. This is the ONLY
-// file this wave owns under api-client/ (documents.ts belongs to an earlier
-// wave; highlights.ts/messages.ts/settings.ts belong to other tracks) — do
-// not add non-scan/non-highlight-rects calls here.
-//
-// Not wired into viewer.ts yet. The backend may not be running in this
-// worktree; see scan-controller.ts and the accompanying scratch scripts for
-// how the NDJSON-parsing logic here was verified.
+// Scan + highlight-rect-persistence storage calls. Same exported function
+// signatures (and the same NDJSON-shaped ScanEvent union) as the old
+// backend-backed version — scan-controller.ts calls these unchanged. The
+// actual per-page LLM scan + concurrency-limit-3 + verbatim-quote-context
+// logic that used to live in backend/app/routers/documents.py's
+// /documents/{id}/scan endpoint now runs directly here.
 
+import * as db from "../db";
+import { highlightRecordToHighlight } from "../highlight-mapper";
+import { chatComplete } from "../llm";
+import { parseJsonArray } from "../llm/parse";
+import { buildScanMessages } from "../llm/prompts";
+import { getStoredSettings } from "../settings-store";
+import { extractContext } from "../text-context";
 import type { Highlight } from "../types";
-
-const BACKEND_BASE = "http://localhost:8721";
 
 export type ScanEvent =
   | {
@@ -26,20 +28,32 @@ export type ScanEvent =
   | { type: "error"; page_number: number; message: string }
   | { type: "done" };
 
+// Simple fixed-size worker pool: `limit` workers pull from a shared index
+// until the queue is drained. Mirrors the old backend's
+// `asyncio.Semaphore(3)` — same "at most 3 pages in flight" behavior,
+// reimplemented since there's no asyncio here.
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let index = 0;
+  async function next(): Promise<void> {
+    const current = index++;
+    if (current >= items.length) return;
+    await worker(items[current]);
+    await next();
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => next());
+  await Promise.all(workers);
+}
+
 /**
- * POSTs `{pages, force}` to `/documents/{documentId}/scan` and incrementally
- * parses the streaming NDJSON response body, calling `onEvent` once per
- * decoded line/JSON object as it arrives (not buffered until the stream
- * ends). Resolves once the response body is fully read (i.e. after the
- * server's trailing `{"type": "done"}` event, though callers should not
- * rely on this function's resolution alone to detect "done" -- always react
- * to the explicit `done` event too, in case a future server response omits
- * or reorders it).
- *
- * Malformed/incomplete lines (should not happen against a spec-compliant
- * backend, but defensive against edge cases like a line split across two
- * stream chunks) are logged via console.warn and skipped rather than
- * thrown -- one bad line must not abort an otherwise-successful scan.
+ * Scans `pages` for confusing spans, calling `onEvent` once per finding as
+ * it's produced (not buffered until the whole scan finishes), then a final
+ * `{type: "done"}`. If this document already has text-type highlights and
+ * `force` is not set, replays them instead of re-querying the LLM — same
+ * caching behavior as the old backend.
  */
 export async function scanDocument(
   documentId: number,
@@ -47,58 +61,84 @@ export async function scanDocument(
   onEvent: (event: ScanEvent) => void,
   force = false,
 ): Promise<void> {
-  const res = await fetch(`${BACKEND_BASE}/documents/${documentId}/scan`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pages, force }),
-  });
-  if (!res.ok) {
-    throw new Error(`scanDocument failed: ${res.status} ${res.statusText}`);
-  }
-  if (!res.body) {
-    throw new Error("scanDocument failed: response has no body to stream");
+  const existing = await db.getHighlightsForDocument(documentId, "text");
+  if (existing.length > 0 && !force) {
+    for (const h of existing) {
+      onEvent({
+        type: "span",
+        page_number: h.page_number,
+        quoted_text: h.quoted_text ?? "",
+        prefix: h.prefix_context ?? "",
+        suffix: h.suffix_context ?? "",
+        reason: h.reason ?? "",
+        difficulty: h.difficulty as number,
+        highlight_id: h.id,
+      });
+    }
+    onEvent({ type: "done" });
+    return;
   }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  const consumeLine = (line: string): void => {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) return; // NDJSON stream may have trailing/blank lines
-    let parsed: ScanEvent;
+  await runWithConcurrency(pages, 3, async (page) => {
+    // Everything for this page -- the LLM call AND the highlight inserts --
+    // is covered by this try/catch. One page's failure must never take
+    // down the others, and must never prevent the "done" sentinel below.
     try {
-      parsed = JSON.parse(trimmed) as ScanEvent;
+      const settings = await getStoredSettings();
+      const messages = buildScanMessages(page.text);
+      const content = await chatComplete(settings, { messages });
+      const rawFindings = parseJsonArray(content);
+
+      const seen = new Set<string>();
+      for (const f of rawFindings) {
+        if (!f || typeof f !== "object") continue;
+        const finding = f as { quoted_text?: unknown; reason?: unknown; difficulty?: unknown };
+        const quotedText = finding.quoted_text;
+        if (!quotedText || typeof quotedText !== "string") continue;
+        if (seen.has(quotedText)) continue;
+        seen.add(quotedText);
+
+        const ctx = extractContext(page.text, quotedText);
+        if (!ctx) continue; // LLM failed to quote verbatim; never invent offsets, drop it
+
+        const difficulty = typeof finding.difficulty === "number" ? finding.difficulty : null;
+        const reason = typeof finding.reason === "string" ? finding.reason : "";
+
+        const record = await db.createTextHighlight({
+          document_id: documentId,
+          page_number: page.page_number,
+          quoted_text: quotedText,
+          prefix_context: ctx.prefix,
+          suffix_context: ctx.suffix,
+          difficulty,
+          reason,
+        });
+
+        onEvent({
+          type: "span",
+          page_number: page.page_number,
+          quoted_text: quotedText,
+          prefix: ctx.prefix,
+          suffix: ctx.suffix,
+          reason,
+          difficulty: difficulty as number,
+          highlight_id: record.id,
+        });
+      }
     } catch (err) {
-      console.warn("scanDocument: skipping unparseable NDJSON line", trimmed, err);
-      return;
+      onEvent({
+        type: "error",
+        page_number: page.page_number,
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
-    onEvent(parsed);
-  };
+  });
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let newlineIndex = buffer.indexOf("\n");
-    while (newlineIndex !== -1) {
-      consumeLine(buffer.slice(0, newlineIndex));
-      buffer = buffer.slice(newlineIndex + 1);
-      newlineIndex = buffer.indexOf("\n");
-    }
-  }
-  // Flush any trailing bytes left in the decoder plus a final unterminated
-  // line (the backend always ends each event with "\n", but don't assume
-  // it for a would-be malformed/truncated stream).
-  buffer += decoder.decode();
-  if (buffer.trim().length > 0) {
-    consumeLine(buffer);
-  }
+  onEvent({ type: "done" });
 }
 
 /**
- * PATCHes rects (and, by default, anchor_status: "resolved") onto a
+ * Persists rects (and, by default, anchor_status: "resolved") onto a
  * highlight once the client has mapped its quoted_text to actual on-page
  * rects. `rects` must be in PDF-user-space units (i.e. divided by the
  * page's render scale), not CSS px -- see scan-controller.ts for why.
@@ -108,13 +148,6 @@ export async function patchHighlightRects(
   rects: Array<{ x: number; y: number; w: number; h: number }>,
   anchorStatus: "resolved" | "stale" = "resolved",
 ): Promise<Highlight> {
-  const res = await fetch(`${BACKEND_BASE}/highlights/${highlightId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rects, anchor_status: anchorStatus }),
-  });
-  if (!res.ok) {
-    throw new Error(`patchHighlightRects failed: ${res.status} ${res.statusText}`);
-  }
-  return (await res.json()) as Highlight;
+  const record = await db.patchHighlightRects(highlightId, rects, anchorStatus);
+  return highlightRecordToHighlight(record);
 }

@@ -1,8 +1,8 @@
-// Settings-related backend API calls. This is the ONLY api-client file this
-// wave owns for settings — follows the same fetch/throw-on-non-ok style as
-// documents.ts.
+// Settings storage calls. Same exported signatures as the old
+// backend-backed version — options.ts calls these unchanged.
 
-const BACKEND_BASE = "http://localhost:8721";
+import { chatComplete } from "../llm";
+import { getStoredSettings, setStoredSettings, type StoredSettings } from "../settings-store";
 
 export type SettingsInfo = {
   provider: string | null;
@@ -12,12 +12,44 @@ export type SettingsInfo = {
   api_key_set: boolean;
 };
 
-export async function getSettings(): Promise<SettingsInfo> {
-  const res = await fetch(`${BACKEND_BASE}/settings`);
-  if (!res.ok) {
-    throw new Error(`getSettings failed: ${res.status} ${res.statusText}`);
+function toSettingsInfo(settings: StoredSettings): SettingsInfo {
+  return {
+    provider: settings.provider,
+    base_url: settings.base_url,
+    model: settings.model,
+    vision_model: settings.vision_model,
+    api_key_set: Boolean(settings.api_key),
+  };
+}
+
+/**
+ * Requests the runtime host permission needed to fetch() a custom Base URL
+ * directly from this extension page. Only fires for a URL not already
+ * covered by manifest.json's static host_permissions (the four built-in
+ * providers). Must be called from a user-gesture handler (the Save button's
+ * click handler in options.ts) — chrome.permissions.request requires one.
+ */
+async function ensureOriginPermission(baseUrl: string | undefined): Promise<void> {
+  if (!baseUrl) return;
+  let origin: string;
+  try {
+    origin = new URL(baseUrl).origin;
+  } catch {
+    return; // let the actual fetch() surface the invalid-URL error later
   }
-  return (await res.json()) as SettingsInfo;
+  const pattern = `${origin}/*`;
+  const alreadyGranted = await chrome.permissions.contains({ origins: [pattern] });
+  if (alreadyGranted) return;
+  const granted = await chrome.permissions.request({ origins: [pattern] });
+  if (!granted) {
+    throw new Error(
+      `Permission for ${origin} was not granted — required to call a custom Base URL from this extension.`,
+    );
+  }
+}
+
+export async function getSettings(): Promise<SettingsInfo> {
+  return toSettingsInfo(await getStoredSettings());
 }
 
 export async function updateSettings(input: {
@@ -27,29 +59,40 @@ export async function updateSettings(input: {
   model: string;
   vision_model?: string;
 }): Promise<SettingsInfo> {
-  const res = await fetch(`${BACKEND_BASE}/settings`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    throw new Error(`updateSettings failed: ${res.status} ${res.statusText}`);
-  }
-  return (await res.json()) as SettingsInfo;
+  await ensureOriginPermission(input.base_url);
+  const stored: StoredSettings = {
+    provider: input.provider,
+    api_key: input.api_key,
+    base_url: input.base_url ?? null,
+    model: input.model,
+    vision_model: input.vision_model ?? null,
+  };
+  await setStoredSettings(stored);
+  return toSettingsInfo(stored);
 }
 
 export async function testSettings(): Promise<{ ok: boolean; message?: string }> {
-  const res = await fetch(`${BACKEND_BASE}/settings/test`, { method: "POST" });
-  if (!res.ok) {
-    throw new Error(`testSettings failed: ${res.status} ${res.statusText}`);
+  const settings = await getStoredSettings();
+  if (!settings.model) return { ok: false, message: "no model configured" };
+  try {
+    await chatComplete(settings, { messages: [{ role: "user", content: "reply with the single word OK" }] });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
-  return (await res.json()) as { ok: boolean; message?: string };
 }
 
 export async function testVisionSettings(): Promise<{ ok: boolean; message?: string }> {
-  const res = await fetch(`${BACKEND_BASE}/settings/test-vision`, { method: "POST" });
-  if (!res.ok) {
-    throw new Error(`testVisionSettings failed: ${res.status} ${res.statusText}`);
+  const settings = await getStoredSettings();
+  const model = settings.vision_model || settings.model;
+  if (!model) return { ok: false, message: "no vision model configured" };
+  try {
+    await chatComplete(settings, {
+      messages: [{ role: "user", content: "reply with the single word OK" }],
+      forceModel: model,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
-  return (await res.json()) as { ok: boolean; message?: string };
 }
