@@ -10,7 +10,8 @@
     "declarativeNetRequestWithHostAccess",
     "downloads",
     "activeTab",
-    "scripting"
+    "scripting",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "*://arxiv.org/*",

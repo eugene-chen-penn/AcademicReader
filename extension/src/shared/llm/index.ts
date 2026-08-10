@@ -4,6 +4,7 @@
 // exactly this prefix-based routing internally; now this module does it
 // directly against each provider's own HTTP API.
 import { anthropicAdapter } from "./providers/anthropic";
+import { codexCliAdapter } from "./providers/codex-cli";
 import { geminiAdapter } from "./providers/gemini";
 import { createOpenAICompatibleAdapter } from "./providers/openai-compatible";
 import type { ChatMessage, ImageAttachment, ProviderAdapter } from "./types";
@@ -30,6 +31,8 @@ function resolveAdapter(prefix: string, baseUrlOverride: string | null): Provide
       return deepseekAdapter;
     case "gemini":
       return geminiAdapter;
+    case "codex-cli":
+      return codexCliAdapter;
     default:
       // Custom / self-hosted OpenAI-compatible endpoint (e.g.
       // "openai/<local-model>" was already handled above via the "openai"
@@ -53,8 +56,15 @@ function resolveAdapter(prefix: string, baseUrlOverride: string | null): Provide
 // setting always overrides this (see hasVisionCapability below).
 function providerSupportsVisionByDefault(prefix: string): boolean {
   if (prefix === "deepseek") return false;
-  if (prefix === "anthropic" || prefix === "openai" || prefix === "gemini") return true;
+  if (prefix === "anthropic" || prefix === "openai" || prefix === "gemini" || prefix === "codex-cli") return true;
   return false; // unrecognized/custom provider: assume no support, matching the old fallback rule
+}
+
+// codex-cli authenticates via the local `codex login` session (a ChatGPT
+// account), not an API key — it's the one provider where settings.api_key
+// legitimately stays empty.
+function providerNeedsApiKey(prefix: string): boolean {
+  return prefix !== "codex-cli";
 }
 
 export function hasVisionCapability(settings: StoredSettings): boolean {
@@ -81,18 +91,18 @@ function resolveModelAndAdapter(
   if (!modelString) {
     throw new LLMNotConfiguredError("no model configured; set it in Settings");
   }
-  if (!settings.api_key) {
-    throw new LLMNotConfiguredError("no API key configured; set it in Settings");
-  }
   const { prefix, rest } = splitModel(modelString);
   if (!prefix) {
     throw new Error(
-      `Model "${modelString}" is not provider-prefixed — see Settings for the required format (e.g. anthropic/..., openai/..., gemini/..., deepseek/...).`,
+      `Model "${modelString}" is not provider-prefixed — see Settings for the required format (e.g. anthropic/..., openai/..., gemini/..., deepseek/..., codex-cli/...).`,
     );
+  }
+  if (providerNeedsApiKey(prefix) && !settings.api_key) {
+    throw new LLMNotConfiguredError("no API key configured; set it in Settings");
   }
   const adapter = resolveAdapter(prefix, settings.base_url);
   const baseUrl = settings.base_url || adapter.defaultBaseUrl;
-  return { adapter, model: rest, apiKey: settings.api_key, baseUrl };
+  return { adapter, model: rest, apiKey: settings.api_key ?? "", baseUrl };
 }
 
 export async function chatComplete(settings: StoredSettings, opts: CallOptions): Promise<string> {

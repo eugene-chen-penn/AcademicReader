@@ -66,12 +66,19 @@ export async function updateSettings(input: {
 }): Promise<SettingsInfo> {
   await ensureOriginPermission(input.base_url);
 
+  // codex-cli authenticates via the local `codex login` session, not an
+  // API key — see shared/llm/index.ts's providerNeedsApiKey, which this
+  // mirrors (duplicated rather than imported: that's a private helper in
+  // the dispatcher module, and the check itself is a one-line provider
+  // identity comparison, not worth a shared-module round-trip for).
+  const needsApiKey = input.provider !== "codex-cli";
+
   let apiKey = input.api_key || null;
-  if (!apiKey) {
+  if (!apiKey && needsApiKey) {
     const existing = await getStoredSettings();
     apiKey = existing.api_key;
   }
-  if (!apiKey) {
+  if (!apiKey && needsApiKey) {
     throw new Error("API key is required — none is currently saved.");
   }
 

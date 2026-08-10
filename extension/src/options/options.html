@@ -56,6 +56,10 @@
         gap: 6px;
       }
 
+      .field.hidden {
+        display: none;
+      }
+
       label {
         font-size: 13px;
         font-weight: 600;
@@ -69,7 +73,8 @@
       }
 
       input[type="text"],
-      input[type="password"] {
+      input[type="password"],
+      select {
         background: #232429;
         border: 1px solid #34353c;
         border-radius: 6px;
@@ -80,9 +85,26 @@
       }
 
       input[type="text"]:focus,
-      input[type="password"]:focus {
+      input[type="password"]:focus,
+      select:focus {
         outline: none;
         border-color: #6c8cff;
+      }
+
+      .model-row {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+      }
+
+      .model-row select {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .model-row button {
+        flex: 0 0 auto;
+        padding: 0 14px;
       }
 
       .help {
@@ -100,6 +122,10 @@
 
       .help.warn {
         color: #d9a441;
+      }
+
+      .help.error {
+        color: #f2a3a3;
       }
 
       .actions {
@@ -186,41 +212,43 @@
       <h1>AcademicReader Settings</h1>
       <p class="subtitle">
         Point AcademicReader at any LLM provider — Anthropic, OpenAI, Google,
-        DeepSeek, or a self-hosted / OpenAI-compatible endpoint — by entering
-        your own API key, base URL, and model below.
+        DeepSeek, a locally logged-in Codex CLI, or a self-hosted /
+        OpenAI-compatible endpoint.
       </p>
 
       <form id="settings-form">
         <div class="field">
           <label for="provider">Provider</label>
-          <input
-            type="text"
-            id="provider"
-            name="provider"
-            list="provider-suggestions"
-            placeholder="e.g. anthropic, openai, or a custom provider name"
-            autocomplete="off"
-            required
-          />
-          <datalist id="provider-suggestions">
-            <option value="anthropic"></option>
-            <option value="openai"></option>
-            <option value="gemini"></option>
-            <option value="deepseek"></option>
-          </datalist>
-          <div class="help">
-            The provider name isn't just cosmetic — it must match your
-            Model's prefix below (e.g. provider <code>gemini</code> with
-            model <code>gemini/gemini-2.5-pro</code>), since that prefix is
-            what this extension uses to decide which provider's API to call
-            directly. For Google, use <code>gemini</code> (Google AI Studio
-            API keys) — not <code>google</code> or <code>vertex_ai</code>,
-            which needs GCP service-account credentials instead of a plain
-            API key and isn't supported here.
+          <select id="provider" name="provider" required>
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Google (Gemini, AI Studio)</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="codex-cli">Codex CLI (ChatGPT login, no API key)</option>
+          </select>
+          <div class="help" id="provider-help">
+            For Google, this uses AI Studio API keys — not
+            <code>vertex_ai</code>, which needs GCP service-account
+            credentials instead of a plain API key and isn't supported here.
           </div>
         </div>
 
-        <div class="field">
+        <div class="field" id="codex-cli-note-field" style="display: none">
+          <div class="help">
+            Uses whatever ChatGPT account is signed in via
+            <code>codex login</code> on this machine — no API key, and it
+            draws on that subscription's included Codex usage instead of
+            metered API billing. One-time setup required: run
+            <code>extension/native-host/register.sh</code> once (Chrome
+            can't launch local programs on its own — this registers a
+            small bridge process it's allowed to launch on demand). Two
+            trade-offs worth knowing: replies arrive all at once after a
+            few seconds rather than streaming word-by-word, and each call
+            carries meaningfully more overhead than a direct API call.
+          </div>
+        </div>
+
+        <div class="field" id="base-url-field">
           <label for="base-url"
             >Base URL <span class="optional">(optional)</span></label
           >
@@ -238,7 +266,7 @@
           </div>
         </div>
 
-        <div class="field">
+        <div class="field" id="api-key-field">
           <label for="api-key">API Key</label>
           <input
             type="password"
@@ -253,52 +281,60 @@
             configure below, over HTTPS. Not shown once saved. Leave this
             blank when saving to keep your existing key — it's only
             required the first time or when you're actually changing it.
+            Also needed here (temporarily, in this field) to fetch the live
+            model list below — it's never sent anywhere except the
+            provider's own API.
           </div>
         </div>
 
         <div class="field">
-          <label for="model">Model</label>
+          <label for="model-select">Model</label>
+          <div class="model-row">
+            <select id="model-select"></select>
+            <button type="button" class="secondary" id="refresh-models-button">
+              Refresh models
+            </button>
+          </div>
           <input
             type="text"
-            id="model"
-            name="model"
-            placeholder="e.g. anthropic/claude-opus-4-6, openai/gpt-5, gemini/gemini-2.5-pro, deepseek/deepseek-chat"
+            id="model-custom"
+            placeholder="e.g. anthropic/claude-opus-4-6"
             autocomplete="off"
-            required
+            style="display: none"
           />
+          <div class="help" id="model-fetch-status"></div>
           <div class="help warn">
-            Must be <strong>provider-prefixed</strong> (e.g.
-            <code>anthropic/claude-opus-4-6</code>,
-            <code>openai/gpt-5</code>, <code>gemini/gemini-2.5-pro</code>,
-            <code>deepseek/deepseek-chat</code>) — this extension uses that
-            prefix to decide which provider's API to call directly. An
-            unprefixed name like <code>deepseek-chat</code> will fail to
-            resolve to any provider at all. Check the provider's own docs
-            for current model names — the examples above may go stale. For
-            a custom OpenAI-compatible endpoint, use
+            Stored as a <strong>provider-prefixed</strong> model string
+            internally (e.g. <code>anthropic/claude-opus-4-6</code>) — this
+            extension uses that prefix to decide which provider's API to
+            call directly. If you type a model manually, include the
+            prefix yourself. For a custom OpenAI-compatible endpoint, use
             <code>openai/&lt;your-model-name&gt;</code> together with a
             custom Base URL above.
           </div>
         </div>
 
         <div class="field">
-          <label for="vision-model"
+          <label for="vision-model-select"
             >Vision Model <span class="optional">(optional)</span></label
           >
+          <div class="model-row">
+            <select id="vision-model-select"></select>
+          </div>
           <input
             type="text"
-            id="vision-model"
-            name="vision_model"
-            placeholder="e.g. anthropic/claude-opus-4-6, openai/gpt-5, gemini/gemini-2.5-pro"
+            id="vision-model-custom"
+            placeholder="e.g. anthropic/claude-opus-4-6"
             autocomplete="off"
+            style="display: none"
           />
           <div class="help">
-            Used for explaining figures/tables — leave blank to reuse Model
-            above if it supports vision. Must also be provider-prefixed (see
-            above). DeepSeek's chat/reasoner models have no vision support —
-            if Model is a <code>deepseek/</code> model, set this to a
-            <code>gemini/</code>, <code>anthropic/</code>, or
-            <code>openai/</code> vision-capable model instead, or figure/table
+            Used for explaining figures/tables — leave on "(same as Model)"
+            to reuse Model above if it supports vision. Shares the model
+            list fetched via the Refresh models button above. DeepSeek's
+            chat/reasoner models have no vision support — if Model is a
+            <code>deepseek/</code> model, pick a vision-capable model from
+            a different provider here instead, or figure/table
             explanations will fail.
           </div>
         </div>

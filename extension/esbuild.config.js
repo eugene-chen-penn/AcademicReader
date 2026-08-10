@@ -53,8 +53,12 @@ function copyStaticAssets() {
   // Additional top-level static asset directories (not per-page .ts
   // entries) — e.g. a future sidebar/ with its own CSS/images, or icons/ —
   // are copied as-is if present. Safe to extend this list; unlisted/missing
-  // dirs are silently skipped.
-  for (const dir of ["icons"]) {
+  // dirs are silently skipped. native-host/ is NOT loaded by the extension
+  // itself (Chrome can't run it — that's the whole reason native messaging
+  // exists) but ships alongside it in the same release zip so
+  // native-host/register.sh is right there for anyone who wants Codex CLI
+  // support, without a second download.
+  for (const dir of ["icons", "native-host"]) {
     if (existsSync(dir)) cpSync(dir, `dist/${dir}`, { recursive: true });
   }
   if (existsSync("node_modules/pdfjs-dist/build/pdf.worker.mjs")) {
