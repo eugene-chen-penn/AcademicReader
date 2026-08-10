@@ -18,3 +18,33 @@ export function extractContext(
   const suffix = pageText.slice(end, end + window);
   return { prefix, suffix };
 }
+
+// Unicode dash/hyphen variants that should all be treated as equivalent to
+// ASCII "-" when deciding whether two quotes are "the same phrase" (e.g. a
+// PDF's typeset en dash vs. an LLM re-typing it as a plain hyphen).
+// Exported so viewer/text-anchor.ts's offset-preserving search
+// normalization can use the same char set without duplicating it.
+export const DASH_VARIANT_CHARS = new Set([
+  "‐", // HYPHEN
+  "‑", // NON-BREAKING HYPHEN
+  "‒", // FIGURE DASH
+  "–", // EN DASH
+  "—", // EM DASH
+  "―", // HORIZONTAL BAR
+  "−", // MINUS SIGN
+]);
+const DASH_VARIANTS_RE = /[‐‑‒–—―−]/g;
+
+/**
+ * Normalizes a phrase for "same phrase, minor formatting differences"
+ * comparison: case-insensitive, dash/hyphen variants unified to ASCII "-",
+ * and runs of whitespace collapsed to a single space. Used both to decide
+ * whether two LLM-reported quotes should share one highlight/conversation
+ * (scan.ts's cross-page dedup) and, via text-anchor.ts's offset-preserving
+ * search normalization, to find every occurrence of a phrase even when its
+ * exact characters differ slightly from the one instance a model
+ * originally quoted.
+ */
+export function normalizePhraseForMatching(s: string): string {
+  return s.toLowerCase().replace(DASH_VARIANTS_RE, "-").replace(/\s+/g, " ").trim();
+}

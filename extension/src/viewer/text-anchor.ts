@@ -6,10 +6,11 @@
 // rect-conversion step, which needs a PDFPageProxy to build a viewport (see
 // resolveQuoteToRects).
 //
-// Not wired into viewer.ts yet; scan-controller.ts is the only consumer.
+// scan-controller.ts is the only consumer.
 
 import { Util } from "pdfjs-dist";
 import type { PDFPageProxy } from "pdfjs-dist";
+import { DASH_VARIANT_CHARS, normalizePhraseForMatching } from "../shared/text-context";
 
 // pdfjs-dist's top-level module doesn't re-export the `TextItem` type
 // directly (only PDFPageProxy et al. as `export type`s -- see
@@ -102,6 +103,27 @@ export interface MatchedItemRange {
   itemStart: number;
 }
 
+/** Maps a [matchStart, matchEnd) character range in normalizedText back
+ * through indexMap to the item(s) that overlap it. Shared by resolveQuote
+ * (exact single match) and resolveAllOccurrences (fuzzy multi-match)
+ * below -- both eventually need this same range-to-items mapping, only
+ * the *search* that produces the range differs between them. */
+function rangeToMatchedItemRanges(
+  indexMap: IndexMapEntry[],
+  matchStart: number,
+  matchEnd: number,
+): MatchedItemRange[] {
+  const ranges: MatchedItemRange[] = [];
+  for (const entry of indexMap) {
+    const overlapStart = Math.max(entry.start, matchStart);
+    const overlapEnd = Math.min(entry.end, matchEnd);
+    if (overlapStart < overlapEnd) {
+      ranges.push({ itemIndex: entry.itemIndex, charStart: overlapStart, charEnd: overlapEnd, itemStart: entry.start });
+    }
+  }
+  return ranges;
+}
+
 /**
  * Finds `quotedText` as an exact substring of `normalizedText` (first
  * occurrence) and maps the matched character range back through
@@ -139,15 +161,7 @@ export function resolveQuote(
     return null;
   }
   const matchEnd = matchStart + quotedText.length;
-
-  const ranges: MatchedItemRange[] = [];
-  for (const entry of indexMap) {
-    const overlapStart = Math.max(entry.start, matchStart);
-    const overlapEnd = Math.min(entry.end, matchEnd);
-    if (overlapStart < overlapEnd) {
-      ranges.push({ itemIndex: entry.itemIndex, charStart: overlapStart, charEnd: overlapEnd, itemStart: entry.start });
-    }
-  }
+  const ranges = rangeToMatchedItemRanges(indexMap, matchStart, matchEnd);
 
   if (ranges.length === 0) {
     // Should be unreachable in practice (a non-empty quotedText that
@@ -161,6 +175,88 @@ export function resolveQuote(
   }
 
   return ranges;
+}
+
+interface SearchNormalized {
+  normalized: string;
+  /** offsets[i] = the index into the ORIGINAL text that normalized[i] was produced from. */
+  offsets: number[];
+}
+
+/**
+ * Same normalization as normalizePhraseForMatching, but offset-preserving:
+ * every output character remembers which single original character
+ * produced it, so a match found in `normalized` can be mapped back to a
+ * real [start, end) range in the original text. Whitespace RUNS collapse
+ * to one output space (pointing at the run's first original character);
+ * every other character maps 1:1.
+ */
+function buildSearchNormalized(text: string): SearchNormalized {
+  let normalized = "";
+  const offsets: number[] = [];
+  let lastWasSpace = true; // leading whitespace is already "collapsed away"
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (/\s/.test(ch)) {
+      if (!lastWasSpace) {
+        normalized += " ";
+        offsets.push(i);
+        lastWasSpace = true;
+      }
+      continue;
+    }
+    lastWasSpace = false;
+    normalized += DASH_VARIANT_CHARS.has(ch) ? "-" : ch.toLowerCase();
+    offsets.push(i);
+  }
+  if (normalized.endsWith(" ")) {
+    normalized = normalized.slice(0, -1);
+    offsets.pop();
+  }
+  return { normalized, offsets };
+}
+
+/**
+ * Finds EVERY occurrence of `quotedText` within `normalizedText`, matching
+ * even when capitalization/whitespace/hyphen-style differs slightly from
+ * the exact characters a model originally quoted (see
+ * normalizePhraseForMatching) -- unlike resolveQuote, which finds only the
+ * first EXACT occurrence. Used to highlight repeat occurrences of an
+ * already-flagged phrase elsewhere on the same or a different page, all of
+ * which get wired to the SAME highlight/conversation by the caller.
+ * Returns one MatchedItemRange[] per occurrence found (possibly empty).
+ */
+export function resolveAllOccurrences(
+  normalizedText: string,
+  indexMap: IndexMapEntry[],
+  quotedText: string,
+): MatchedItemRange[][] {
+  const target = normalizePhraseForMatching(quotedText);
+  if (!target) return [];
+
+  const search = buildSearchNormalized(normalizedText);
+  const results: MatchedItemRange[][] = [];
+  let searchFrom = 0;
+  for (;;) {
+    const idx = search.normalized.indexOf(target, searchFrom);
+    if (idx === -1) break;
+    const matchEndNorm = idx + target.length;
+    const originalStart = search.offsets[idx];
+    // If the match runs to the very end of the normalized text, there's no
+    // "next" offset to read -- fall back to the original text's own
+    // length. Otherwise offsets[matchEndNorm] is the original index of
+    // whatever character comes right after the match, which is exactly
+    // the exclusive end we want (see buildSearchNormalized's 1:1 mapping;
+    // the only imprecision is that trailing collapsed whitespace right
+    // after a match can bleed into this range, which is harmless --
+    // whitespace has no glyph to mis-highlight).
+    const originalEnd = matchEndNorm < search.offsets.length ? search.offsets[matchEndNorm] : normalizedText.length;
+
+    const ranges = rangeToMatchedItemRanges(indexMap, originalStart, originalEnd);
+    if (ranges.length > 0) results.push(ranges);
+    searchFrom = idx + target.length;
+  }
+  return results;
 }
 
 export interface PixelRect {

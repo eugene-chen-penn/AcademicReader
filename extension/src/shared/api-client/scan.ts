@@ -6,12 +6,13 @@
 // /documents/{id}/scan endpoint now runs directly here.
 
 import * as db from "../db";
+import type { HighlightRecord } from "../db";
 import { highlightRecordToHighlight } from "../highlight-mapper";
 import { chatComplete } from "../llm";
 import { parseJsonArray } from "../llm/parse";
 import { buildScanMessages } from "../llm/prompts";
 import { getStoredSettings } from "../settings-store";
-import { extractContext } from "../text-context";
+import { extractContext, normalizePhraseForMatching } from "../text-context";
 import type { Highlight } from "../types";
 
 export type ScanEvent =
@@ -54,6 +55,22 @@ async function runWithConcurrency<T>(
  * `{type: "done"}`. If this document already has text-type highlights and
  * `force` is not set, replays them instead of re-querying the LLM — same
  * caching behavior as the old backend.
+ *
+ * Cross-page/cross-scan dedup: if the LLM independently flags the "same"
+ * phrase (per normalizePhraseForMatching -- case/whitespace/hyphen-
+ * insensitive) on more than one page, or on a re-scan of a phrase it
+ * already flagged before, this reuses the SAME highlight record instead of
+ * creating a duplicate -- so every occurrence of that phrase ends up
+ * wired to one shared conversation (scan-controller.ts is what actually
+ * renders a highlight rect at every occurrence; this only needs to avoid
+ * creating redundant highlight rows). `phraseToHighlight` maps a
+ * normalized phrase to an in-flight-or-resolved creation Promise rather
+ * than a resolved record, so two pages racing to be first to report a
+ * brand-new phrase (this runs `pages` at concurrency 3) still converge on
+ * one `db.createTextHighlight` call: the SECOND page to check the map
+ * always finds the FIRST page's promise already registered, because the
+ * check-then-register step below has no `await` in between and JS's
+ * single-threaded event loop can't interleave another task into that gap.
  */
 export async function scanDocument(
   documentId: number,
@@ -62,6 +79,15 @@ export async function scanDocument(
   force = false,
 ): Promise<void> {
   const existing = await db.getHighlightsForDocument(documentId, "text");
+
+  const phraseToHighlight = new Map<string, Promise<HighlightRecord>>();
+  for (const h of existing) {
+    if (h.quoted_text) {
+      const key = normalizePhraseForMatching(h.quoted_text);
+      if (!phraseToHighlight.has(key)) phraseToHighlight.set(key, Promise.resolve(h));
+    }
+  }
+
   if (existing.length > 0 && !force) {
     for (const h of existing) {
       onEvent({
@@ -104,24 +130,33 @@ export async function scanDocument(
         const difficulty = typeof finding.difficulty === "number" ? finding.difficulty : null;
         const reason = typeof finding.reason === "string" ? finding.reason : "";
 
-        const record = await db.createTextHighlight({
-          document_id: documentId,
-          page_number: page.page_number,
-          quoted_text: quotedText,
-          prefix_context: ctx.prefix,
-          suffix_context: ctx.suffix,
-          difficulty,
-          reason,
-        });
+        const phraseKey = normalizePhraseForMatching(quotedText);
+        let creation = phraseToHighlight.get(phraseKey);
+        if (!creation) {
+          // Registered synchronously (no `await` yet) so a concurrently-
+          // running page checking the same phraseKey right now sees this
+          // promise already in the map instead of racing to create its own.
+          creation = db.createTextHighlight({
+            document_id: documentId,
+            page_number: page.page_number,
+            quoted_text: quotedText,
+            prefix_context: ctx.prefix,
+            suffix_context: ctx.suffix,
+            difficulty,
+            reason,
+          });
+          phraseToHighlight.set(phraseKey, creation);
+        }
+        const record = await creation;
 
         onEvent({
           type: "span",
-          page_number: page.page_number,
-          quoted_text: quotedText,
-          prefix: ctx.prefix,
-          suffix: ctx.suffix,
-          reason,
-          difficulty: difficulty as number,
+          page_number: record.page_number,
+          quoted_text: record.quoted_text ?? quotedText,
+          prefix: record.prefix_context ?? ctx.prefix,
+          suffix: record.suffix_context ?? ctx.suffix,
+          reason: record.reason ?? reason,
+          difficulty: (record.difficulty ?? difficulty) as number,
           highlight_id: record.id,
         });
       }

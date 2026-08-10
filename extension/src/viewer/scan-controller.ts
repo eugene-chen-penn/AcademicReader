@@ -1,6 +1,9 @@
 // Orchestrates the auto-scan flow: pulls text out of each rendered page,
 // sends it to the local scan flow (shared/api-client/scan.ts), resolves
-// each returned quote to on-page rects, renders them via overlay.ts's
+// each returned quote to on-page rects -- on EVERY page, not just the one
+// that originally reported it, so repeat occurrences of the same phrase
+// elsewhere in the document get highlighted too, all wired to the same
+// highlight/conversation -- renders them via overlay.ts's
 // renderHighlightRect, persists the resolved rects back to storage, and
 // mounts the familiarity slider into #toolbar. This module is
 // self-contained and only touches the `container` elements handed to it
@@ -11,7 +14,7 @@ import type { Highlight } from "../shared/types";
 import { renderHighlightRect } from "./overlay";
 import {
   extractPageText,
-  resolveQuote,
+  resolveAllOccurrences,
   matchedRangesToRects,
   type TextItem,
   type IndexMapEntry,
@@ -215,39 +218,28 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
     text: pageContexts.get(p.pageNumber)?.normalizedText ?? "",
   }));
 
+  // A given highlight_id can arrive via more than one span event within
+  // the same scan run: scan.ts dedupes the SAME phrase across pages down
+  // to one highlight record, but still emits a span event from every page
+  // that independently reported it (simpler than suppressing there -- see
+  // scan.ts's comment). Since this function itself now searches ALL pages
+  // for every occurrence regardless of which page's event triggered it,
+  // a second event for an already-handled highlight_id would just re-do
+  // the same full sweep and render duplicate rects on top of the first
+  // set. Guard against that here, once per initScan call.
+  const renderedHighlightIds = new Set<number>();
+
   const handleSpan = (event: Extract<ScanEvent, { type: "span" }>): void => {
-    const ctx = pageContexts.get(event.page_number);
-    if (!ctx) {
-      console.warn(
-        `scan-controller: span event for page_number ${event.page_number}, which is not among the pages passed to initScan; skipping`,
-      );
-      return;
-    }
-
-    const ranges = resolveQuote(ctx.normalizedText, ctx.indexMap, event.quoted_text);
-    if (!ranges) return; // resolveQuote already logged the reason
-
-    const cssRects = matchedRangesToRects(ranges, ctx.items, ctx.info.page, ctx.info.scale);
-    if (cssRects.length === 0) {
-      console.warn(
-        `scan-controller: resolved quote for highlight ${event.highlight_id} produced zero rects; skipping render`,
-      );
-      return;
-    }
-
-    // Persisted/"PDF-user-space" units per patchHighlightRects's contract,
-    // but see toPersistedRect's doc comment: this is really CSS-px-at-scale-1
-    // (top-left origin, y-down), not true bottom-left-origin PDF user
-    // space -- the y-flip is already baked in and dividing by scale just
-    // undoes the zoom multiplication, not the flip. Computed once and
-    // reused for both the Highlight object and the PATCH body below.
-    const persistedRects = cssRects.map((r) => toPersistedRect(r, ctx.info.scale));
+    if (renderedHighlightIds.has(event.highlight_id)) return;
+    renderedHighlightIds.add(event.highlight_id);
 
     // Constructed from the span event's fields directly. `created_at` is a
     // client-side placeholder since scan span events don't carry the DB
     // row's real timestamp -- the sidebar's first-message composition (the
     // stated consumer) only needs id/type/quoted_text/context/reason/
-    // difficulty, not created_at.
+    // difficulty, not created_at. All rendered occurrences (see below)
+    // share this SAME object, so clicking any of them opens the identical
+    // sidebar conversation.
     const highlight: Highlight = {
       id: event.highlight_id,
       document_id: deps.documentId,
@@ -256,24 +248,63 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
       quoted_text: event.quoted_text,
       prefix_context: event.prefix,
       suffix_context: event.suffix,
-      rects: persistedRects,
+      rects: null, // filled in below once the first occurrence's rects are known
       anchor_status: "resolved",
       difficulty: event.difficulty,
       reason: event.reason,
       created_at: new Date().toISOString(),
     };
 
-    for (const rect of cssRects) {
-      const el = renderHighlightRect(ctx.info.container, rect, () => deps.onHighlightClick(highlight));
-      el.style.display = shouldShowAtFamiliarityLevel(event.difficulty, currentFamiliarityLevel)
-        ? ""
-        : "none";
-      renderedHighlights.push({ element: el, difficulty: event.difficulty });
+    let firstOccurrencePersisted = false;
+    let anyRectsRendered = false;
+
+    // Search EVERY rendered page, not just event.page_number: the phrase
+    // may repeat elsewhere in the document (or more than once on this
+    // same page -- resolveQuote's exact-match-only search used to miss
+    // same-page repeats too), and every occurrence found gets highlighted
+    // and wired to this same `highlight` object/conversation.
+    for (const ctx of pageContexts.values()) {
+      const occurrences = resolveAllOccurrences(ctx.normalizedText, ctx.indexMap, event.quoted_text);
+      for (const ranges of occurrences) {
+        const cssRects = matchedRangesToRects(ranges, ctx.items, ctx.info.page, ctx.info.scale);
+        if (cssRects.length === 0) continue;
+
+        for (const rect of cssRects) {
+          const el = renderHighlightRect(ctx.info.container, rect, () => deps.onHighlightClick(highlight));
+          el.style.display = shouldShowAtFamiliarityLevel(event.difficulty, currentFamiliarityLevel)
+            ? ""
+            : "none";
+          renderedHighlights.push({ element: el, difficulty: event.difficulty });
+        }
+        anyRectsRendered = true;
+
+        // Persist rects for the first occurrence only -- see
+        // toPersistedRect's doc comment and patchHighlightRects's own
+        // contract; these aren't actually re-read to render on reload
+        // (rects are always re-resolved fresh, as this whole function
+        // does), so there's no benefit to a PATCH call per occurrence.
+        if (!firstOccurrencePersisted) {
+          firstOccurrencePersisted = true;
+          // Persisted/"PDF-user-space" units per patchHighlightRects's
+          // contract, but see toPersistedRect's doc comment: this is
+          // really CSS-px-at-scale-1 (top-left origin, y-down), not true
+          // bottom-left-origin PDF user space -- the y-flip is already
+          // baked in and dividing by scale just undoes the zoom
+          // multiplication, not the flip.
+          const persistedRects = cssRects.map((r) => toPersistedRect(r, ctx.info.scale));
+          highlight.rects = persistedRects;
+          patchHighlightRects(event.highlight_id, persistedRects, "resolved").catch((err) => {
+            console.warn(`scan-controller: failed to persist rects for highlight ${event.highlight_id}`, err);
+          });
+        }
+      }
     }
 
-    patchHighlightRects(event.highlight_id, persistedRects, "resolved").catch((err) => {
-      console.warn(`scan-controller: failed to persist rects for highlight ${event.highlight_id}`, err);
-    });
+    if (!anyRectsRendered) {
+      console.warn(
+        `scan-controller: could not resolve any occurrence of highlight ${event.highlight_id} on any page; skipping render`,
+      );
+    }
   };
 
   const onEvent = (event: ScanEvent): void => {
