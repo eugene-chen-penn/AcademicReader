@@ -16,6 +16,7 @@ import { extractContext, normalizePhraseForMatching } from "../text-context";
 import type { Highlight } from "../types";
 
 export type ScanEvent =
+  | { type: "scan_started"; total_pages: number }
   | {
       type: "span";
       page_number: number;
@@ -26,6 +27,7 @@ export type ScanEvent =
       difficulty: number;
       highlight_id: number;
     }
+  | { type: "page_complete"; page_number: number }
   | { type: "error"; page_number: number; message: string }
   | { type: "done" };
 
@@ -105,10 +107,16 @@ export async function scanDocument(
     return;
   }
 
+  onEvent({ type: "scan_started", total_pages: pages.length });
+
   await runWithConcurrency(pages, 3, async (page) => {
     // Everything for this page -- the LLM call AND the highlight inserts --
     // is covered by this try/catch. One page's failure must never take
     // down the others, and must never prevent the "done" sentinel below.
+    // The outer try/finally guarantees "page_complete" fires exactly once
+    // per page regardless of success/failure, so a progress indicator
+    // driven by counting these (scan-controller.ts) always reaches 100%
+    // instead of stalling on whichever pages happened to error.
     try {
       const settings = await getStoredSettings();
       const messages = buildScanMessages(page.text);
@@ -166,6 +174,8 @@ export async function scanDocument(
         page_number: page.page_number,
         message: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      onEvent({ type: "page_complete", page_number: page.page_number });
     }
   });
 

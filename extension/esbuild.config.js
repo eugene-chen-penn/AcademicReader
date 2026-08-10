@@ -14,7 +14,7 @@ const watch = process.argv.includes("--watch");
 // a new page (e.g. src/sidebar/sidebar.ts) should follow the same
 // { in: "src/<name>/<name>.ts", out: "<name>" } shape and add "<name>" to
 // the PAGES list below.
-const PAGES = ["viewer", "options"];
+const PAGES = ["viewer", "options", "popup"];
 
 const buildOptions = {
   entryPoints: [

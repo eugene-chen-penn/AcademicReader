@@ -161,6 +161,81 @@ async function mountFamiliaritySlider(): Promise<void> {
   applyFamiliarityFilter();
 }
 
+// Scan progress bar: mounted lazily on the first "scan_started" event (a
+// real LLM scan is actually about to run), never on a cache replay (see
+// scan.ts's `existing.length > 0 && !force` branch, which never emits
+// "scan_started" -- that path is synchronous and near-instant, so a
+// progress bar would just flash uselessly). Torn down (not just hidden) on
+// "done" so a later force-rescan starts from a clean 0/N instead of
+// visually jumping from wherever the previous scan left off.
+let progressWrapper: HTMLElement | null = null;
+let progressFill: HTMLElement | null = null;
+let progressLabel: HTMLElement | null = null;
+let pagesScanned = 0;
+let totalPagesToScan = 0;
+
+function updateScanProgressUI(): void {
+  if (!progressFill || !progressLabel) return;
+  const pct = totalPagesToScan > 0 ? Math.round((pagesScanned / totalPagesToScan) * 100) : 0;
+  progressFill.style.width = `${pct}%`;
+  progressLabel.textContent = `Scanning ${pagesScanned}/${totalPagesToScan}…`;
+}
+
+function mountScanProgress(totalPages: number): void {
+  pagesScanned = 0;
+  totalPagesToScan = totalPages;
+
+  const toolbar = document.getElementById("toolbar");
+  if (!toolbar) {
+    console.warn("scan-controller: #toolbar not found, scan progress bar not mounted");
+    return;
+  }
+
+  progressWrapper = document.createElement("div");
+  progressWrapper.className = "ar-scan-progress";
+  progressWrapper.style.display = "flex";
+  progressWrapper.style.alignItems = "center";
+  progressWrapper.style.gap = "8px";
+
+  const track = document.createElement("div");
+  track.style.width = "120px";
+  track.style.height = "6px";
+  track.style.borderRadius = "3px";
+  track.style.background = "#2a2b31";
+  track.style.overflow = "hidden";
+  track.setAttribute("role", "progressbar");
+  track.setAttribute("aria-valuemin", "0");
+  track.setAttribute("aria-valuemax", String(totalPages));
+
+  progressFill = document.createElement("div");
+  progressFill.style.height = "100%";
+  progressFill.style.width = "0%";
+  progressFill.style.background = "#6c8cff";
+  progressFill.style.transition = "width 0.15s ease";
+  track.appendChild(progressFill);
+
+  progressLabel = document.createElement("span");
+  progressLabel.className = "ar-scan-progress-label";
+
+  progressWrapper.append(track, progressLabel);
+  toolbar.appendChild(progressWrapper);
+
+  updateScanProgressUI();
+}
+
+function advanceScanProgress(): void {
+  if (!progressWrapper) return; // no scan in progress (e.g. a cache replay)
+  pagesScanned += 1;
+  updateScanProgressUI();
+}
+
+function unmountScanProgress(): void {
+  progressWrapper?.remove();
+  progressWrapper = null;
+  progressFill = null;
+  progressLabel = null;
+}
+
 interface PageContext {
   info: PageRenderInfo;
   items: TextItem[];
@@ -312,12 +387,17 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
 
   const onEvent = (event: ScanEvent): void => {
     try {
-      if (event.type === "span") {
+      if (event.type === "scan_started") {
+        mountScanProgress(event.total_pages);
+      } else if (event.type === "span") {
         handleSpan(event);
+      } else if (event.type === "page_complete") {
+        advanceScanProgress();
       } else if (event.type === "error") {
         console.warn(`scan-controller: scan error on page ${event.page_number}: ${event.message}`);
+      } else if (event.type === "done") {
+        unmountScanProgress();
       }
-      // "done": nothing further needed, the stream is just finished.
     } catch (err) {
       // A single malformed/unexpected event must not abort the rest of the
       // stream -- log and keep going.

@@ -96,15 +96,20 @@ few seconds rather than streaming word-by-word (Codex CLI's non-interactive mode
 incremental output), and each call carries meaningfully more overhead than a direct API call
 (Codex's system prompt is built for a coding agent, not a one-line Q&A).
 
-## What auto-detects vs. needs the manual button
+## What auto-detects vs. needs the popup
 
 `rules.json` only auto-redirects PDF URLs it can match by a reliable, stable pattern:
 **arXiv, ACM, OpenReview, ACL Anthology, Springer, and PMC/NCBI**. Everything else on the granted
 domain list (IEEE, ScienceDirect, Nature, JSTOR, ResearchGate, SSRN, bioRxiv, medRxiv, Semantic
 Scholar, PLOS, MDPI, Wiley, Taylor & Francis, Sage, Cell, Science, Frontiers, PNAS) has host
-permission but no auto-redirect rule yet — open the PDF and click the toolbar icon to send it
-through manually. Extending `rules.json` to a given site is straightforward once you know its
-PDF URL shape.
+permission but no auto-redirect rule yet — open the PDF and click the toolbar icon: the popup's
+**Read this page as a PDF** button sends it through manually. Extending `rules.json` to a given
+site is straightforward once you know its PDF URL shape.
+
+For any other site — not on the granted domain list at all, a PDF link buried in a webpage, a
+paywalled/DOI-redirected URL — the same popup has an **Open a PDF from any URL** field. Paste the
+PDF's URL, and it requests permission for that origin at runtime (a one-time browser prompt) and
+opens it in the reader. Nothing is fetched or granted access to until you do this.
 
 ## What the chat sees
 
