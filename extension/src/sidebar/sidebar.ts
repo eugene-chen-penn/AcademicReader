@@ -241,6 +241,7 @@ function ensureDom(): SidebarDom {
   closeBtn.setAttribute("aria-label", "Close chat panel");
   closeBtn.addEventListener("click", () => {
     root.style.display = "none";
+    document.getElementById("pages")?.classList.remove("sidebar-open");
   });
   header.appendChild(closeBtn);
 
@@ -518,6 +519,11 @@ function handleSend(): void {
 export function openSidebar(highlight: Highlight): void {
   const { root } = ensureDom();
   root.style.display = "flex";
+  // Shifts #pages's centering into the space left of the sidebar (see
+  // viewer.html's #pages.sidebar-open rule) -- without this, the PDF stays
+  // centered on the full window width and looks off-center once the
+  // sidebar covers the right side of the screen.
+  document.getElementById("pages")?.classList.add("sidebar-open");
 
   if (highlight.id === currentHighlightId) {
     return;

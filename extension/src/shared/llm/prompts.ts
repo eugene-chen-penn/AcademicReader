@@ -13,7 +13,7 @@ Respond with ONLY a JSON array (no markdown code fences, no commentary, no surro
 Rules:
 - "quoted_text" MUST be copied verbatim as an exact substring of the page text given to you. Never paraphrase, never summarize, never invent text that is not present, never alter whitespace, casing, or punctuation. If you cannot quote it exactly, do not include it.
 - "reason" is a short 1-2 sentence explanation of why this might be confusing to a reader.
-- "difficulty" is an integer from 1 to 5, where 1 = trivial jargon a beginner might not know, and 5 = genuinely hard even for someone in the field.
+- "difficulty" is an integer from 1 to 10, where 1 = trivial jargon a beginner might not know, and 10 = genuinely hard even for someone in the field. Use the full range rather than clustering everything in the middle.
 - If nothing on the page is confusing, return an empty array: []
 - Return the JSON array directly. Do not wrap it in an object, do not add explanation before or after it.`;
 

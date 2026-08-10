@@ -36,9 +36,9 @@ export interface ScanControllerDeps {
 }
 
 const STORAGE_KEY = "ar_familiarity_threshold";
-const DEFAULT_FAMILIARITY_LEVEL = 3;
+const DEFAULT_FAMILIARITY_LEVEL = 5;
 const MIN_FAMILIARITY_LEVEL = 1;
-const MAX_FAMILIARITY_LEVEL = 5;
+const MAX_FAMILIARITY_LEVEL = 10;
 
 interface RenderedHighlightEntry {
   element: HTMLElement;
@@ -59,11 +59,14 @@ const renderedHighlights: RenderedHighlightEntry[] = [];
  * the direction is never ambiguous from the code alone):
  *
  * The slider represents "how familiar I am with this topic", 1 (beginner)
- * to 5 (expert).
+ * to 10 (expert) -- ten levels, matching the scan prompt's own 1-10
+ * difficulty scale (shared/llm/prompts.ts) so every slider position is
+ * actually reachable by real highlights, not just the 5 an earlier version
+ * of the scale would have produced.
  *   - 1 (leftmost, "Beginner — show more"): show everything, including
  *     easy spans a beginner might not know. difficulty >= 1 always shows.
- *   - 5 (rightmost, "Expert — show less"): show only the genuinely hardest
- *     spans. difficulty >= 5 required, i.e. only difficulty-5 spans show.
+ *   - 10 (rightmost, "Expert — show less"): show only the genuinely hardest
+ *     spans. difficulty >= 10 required, i.e. only difficulty-10 spans show.
  *
  * So a highlight is shown iff `difficulty >= familiarityLevel` -- the
  * slider value IS the minimum difficulty required to surface a span, not

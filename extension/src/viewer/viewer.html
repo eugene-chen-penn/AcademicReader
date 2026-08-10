@@ -14,6 +14,7 @@
         background: #525659;
         color: #eee;
         font-family: system-ui, sans-serif;
+        --sidebar-width: 360px;
       }
 
       /* Fixed wrapper around #status + #toolbar so they stay pinned to the
@@ -87,7 +88,7 @@
         top: 0;
         right: 0;
         bottom: 0;
-        width: 360px;
+        width: var(--sidebar-width);
         background: #202225;
         color: #eee;
         box-shadow: -2px 0 8px rgba(0, 0, 0, 0.4);
@@ -106,6 +107,18 @@
            bottom padding plus a same-value fallback in case that JS
            somehow never runs. */
         padding: 24px 0;
+        padding-right: 0;
+        transition: padding-right 0.2s ease;
+      }
+
+      /* #sidebar-root is `position: fixed`, so it overlays rather than
+         pushing #pages's flow content over -- without this, `align-items:
+         center` keeps centering pages against the FULL window width, so
+         they visually sit off-center (shifted right) once the sidebar
+         covers the right var(--sidebar-width) of the screen. sidebar.ts
+         toggles this class alongside #sidebar-root's own show/hide. */
+      #pages.sidebar-open {
+        padding-right: var(--sidebar-width);
       }
 
       .ar-page {
