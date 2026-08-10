@@ -36,6 +36,16 @@ export type HighlightRecord = {
   crop_blob: Blob | null;
   reason: string | null;
   created_at: string;
+  // "text"-type only: who created this highlight. "scan" (the default) for
+  // an LLM-flagged confusing span; "manual" for one the user created by
+  // selecting text themselves (see viewer/text-selection.ts). Distinguishes
+  // "this document has text highlights" from "this document has been
+  // scanned" -- shared/api-client/scan.ts's cache-check needs that
+  // distinction so a manually-selected highlight doesn't make it think a
+  // real scan already ran and skip it. Rows created before this field
+  // existed have it undefined, which every read site treats the same as
+  // "scan" (`source !== "manual"`) for backward compatibility.
+  source?: "scan" | "manual";
 };
 
 export type MessageRecord = {
@@ -164,6 +174,7 @@ export async function createTextHighlight(input: {
   rects?: Rect[] | null;
   difficulty?: number | null;
   reason?: string | null;
+  source?: "scan" | "manual";
 }): Promise<HighlightRecord> {
   const db = await openDatabase();
   const tx = db.transaction("highlights", "readwrite");
@@ -182,6 +193,7 @@ export async function createTextHighlight(input: {
     crop_blob: null,
     reason: input.reason ?? null,
     created_at: nowIso(),
+    source: input.source ?? "scan",
   };
   const id = await requestToPromise(store.add(record) as IDBRequest<number>);
   await txDone(tx);

@@ -111,6 +111,25 @@ paywalled/DOI-redirected URL — the same popup has an **Open a PDF from any URL
 PDF's URL, and it requests permission for that origin at runtime (a one-time browser prompt) and
 opens it in the reader. Nothing is fetched or granted access to until you do this.
 
+## Ways to create a highlight
+
+Three, all sharing the same persistent-chat model:
+
+- **Auto-scan**: runs automatically when you open a PDF, flagging confusing spans and showing a
+  progress bar in the toolbar while it works (skipped on a reopen — cached results replay instantly
+  instead). A repeat occurrence of the same flagged phrase elsewhere in the document shares the
+  same highlight and conversation.
+- **Region-select**: the toolbar's **Select figure/table** button, then drag a box over a figure or
+  table for an explanation.
+- **Select text, ask AI**: select any text in the PDF and click the **Ask AI** button that appears
+  — for a specific passage you want explained, independent of whatever auto-scan did or didn't
+  flag. Unlike auto-scan, this highlights only the exact spot you selected, not every repeat of
+  that phrase elsewhere.
+
+**Rescan** (toolbar) re-runs auto-scan from scratch — useful after switching to a stronger model in
+Settings, or if the first pass missed something. It doesn't touch region or manually-selected
+highlights.
+
 ## What the chat sees
 
 Each highlight's conversation is given the highlighted text plus its immediate surrounding

@@ -20,6 +20,7 @@ import type { Highlight } from "../shared/types";
 import { renderHighlightRect } from "./overlay";
 import { initScan } from "./scan-controller";
 import { initRegionSelect } from "./region-select";
+import { initTextSelection } from "./text-selection";
 import { openSidebar } from "../sidebar/sidebar";
 
 // pdf.worker.mjs is vendored to the extension root by esbuild.config.js and
@@ -103,20 +104,27 @@ interface RenderedPage {
   page: PDFPageProxy;
   container: HTMLElement;
   canvas: HTMLCanvasElement;
+  textLayerDiv: HTMLElement;
   scale: number;
 }
 
-async function renderPage(pdfPage: PDFPageProxy, container: HTMLElement): Promise<RenderedPage> {
+/**
+ * Renders `pdfPage` into `pageDiv`, an ALREADY-APPENDED placeholder (see
+ * renderPagesConcurrently) rather than creating+appending its own container.
+ * This split — reserve DOM position synchronously, fill it in
+ * asynchronously — is what lets pages render concurrently below without
+ * scrambling reading order: whichever page's canvas/text-layer finishes
+ * first still lands in its own pre-placed slot, not wherever the DOM
+ * happened to be when it finished.
+ */
+async function renderPage(pdfPage: PDFPageProxy, pageDiv: HTMLElement): Promise<RenderedPage> {
   const viewport = pdfPage.getViewport({ scale: 1.5 });
 
-  const pageDiv = document.createElement("div");
-  pageDiv.className = "ar-page";
   pageDiv.style.width = `${viewport.width}px`;
   pageDiv.style.height = `${viewport.height}px`;
   // TextLayer positions its spans via `var(--scale-factor)`; pdf.js's own
   // viewer sets this per-page, so we mirror that here.
   pageDiv.style.setProperty("--scale-factor", String(viewport.scale));
-  container.appendChild(pageDiv);
 
   const canvas = document.createElement("canvas");
   canvas.width = viewport.width;
@@ -144,8 +152,52 @@ async function renderPage(pdfPage: PDFPageProxy, container: HTMLElement): Promis
     page: pdfPage,
     container: pageDiv,
     canvas,
+    textLayerDiv,
     scale: viewport.scale,
   };
+}
+
+// Bounded, not unbounded (Promise.all over every page): a 100+ page PDF
+// firing that many concurrent pdf.js renders at once would spike memory/CPU
+// for no real gain past a handful in flight. Matches the same
+// bounded-worker-pool shape shared/api-client/scan.ts already uses for LLM
+// call concurrency.
+const RENDER_CONCURRENCY = 4;
+
+/**
+ * Renders every page of `pdf` into `pagesEl`, in reading order, with up to
+ * RENDER_CONCURRENCY pages in flight at once. Placeholder <div class="ar-page">
+ * containers are appended to `pagesEl` synchronously and in order BEFORE any
+ * async rendering starts -- pdf.js has no problem rendering different pages
+ * to different canvases concurrently, but appendChild order does not
+ * self-correct, so without pre-placed slots, whichever page's render
+ * finishes first would appear first regardless of page number.
+ */
+async function renderPagesConcurrently(
+  pdf: { numPages: number; getPage(n: number): Promise<PDFPageProxy> },
+  pagesEl: HTMLElement,
+): Promise<RenderedPage[]> {
+  const results: RenderedPage[] = new Array(pdf.numPages);
+  const placeholders: HTMLElement[] = [];
+  for (let i = 0; i < pdf.numPages; i++) {
+    const div = document.createElement("div");
+    div.className = "ar-page";
+    pagesEl.appendChild(div);
+    placeholders.push(div);
+  }
+
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    for (;;) {
+      const index = cursor++;
+      if (index >= pdf.numPages) return;
+      const pdfPage = await pdf.getPage(index + 1);
+      results[index] = await renderPage(pdfPage, placeholders[index]);
+    }
+  }
+  const workerCount = Math.min(RENDER_CONCURRENCY, pdf.numPages);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 /** Redraws an already-persisted region highlight (from a reopened document)
@@ -163,6 +215,26 @@ function renderExistingRegionHighlight(highlight: Highlight, page: RenderedPage)
     h: highlight.bbox.h * page.scale,
   };
   renderHighlightRect(page.container, rect, () => openSidebar(highlight));
+}
+
+/**
+ * Redraws an already-persisted MANUAL text highlight (source: "manual", see
+ * shared/db.ts's HighlightRecord doc comment) directly from its own stored
+ * `rects` -- the exact position the user selected, not a re-resolved search
+ * for its quoted_text -- exactly like renderExistingRegionHighlight does for
+ * bbox. Deliberately NOT handled via scan-controller.ts's handleSpan/
+ * resolveAllOccurrences pipeline: that resolves a phrase against EVERY page
+ * (right for an LLM-flagged concept that may recur; wrong for "the user
+ * selected this one specific occurrence"), which was found in testing to
+ * multiply a 1-rect manual highlight into one rect per repeat of that
+ * phrase anywhere in the document on reload/rescan.
+ */
+function renderExistingManualTextHighlight(highlight: Highlight, page: RenderedPage): void {
+  if (!highlight.rects || highlight.rects.length === 0) return;
+  for (const r of highlight.rects) {
+    const rect = { x: r.x * page.scale, y: r.y * page.scale, w: r.w * page.scale, h: r.h * page.scale };
+    renderHighlightRect(page.container, rect, () => openSidebar(highlight));
+  }
 }
 
 function mountSettingsLink(): void {
@@ -240,11 +312,7 @@ async function main(): Promise<void> {
 
     setStatus(`Rendering ${pdf.numPages} page(s) …`);
 
-    const renderedPages: RenderedPage[] = [];
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-      const pdfPage = await pdf.getPage(pageNumber);
-      renderedPages.push(await renderPage(pdfPage, pagesEl));
-    }
+    const renderedPages = await renderPagesConcurrently(pdf, pagesEl);
 
     hideStatus();
 
@@ -272,9 +340,17 @@ async function main(): Promise<void> {
     if (existing) {
       const pageByNumber = new Map(renderedPages.map((p) => [p.pageNumber, p]));
       for (const highlight of existing.highlights) {
-        if (highlight.type !== "region") continue; // text-type: handled by initScan's replay
         const page = pageByNumber.get(highlight.page_number);
-        if (page) renderExistingRegionHighlight(highlight, page);
+        if (!page) continue;
+        if (highlight.type === "region") {
+          renderExistingRegionHighlight(highlight, page);
+        } else if (highlight.type === "text" && highlight.source === "manual") {
+          renderExistingManualTextHighlight(highlight, page);
+        }
+        // Other text-type (scan-sourced) highlights: handled by initScan's
+        // own replay, which resolves them via search (see scan.ts) since
+        // they don't have a single fixed position the way a manual
+        // selection or a region crop does.
       }
     }
 
@@ -293,6 +369,12 @@ async function main(): Promise<void> {
     });
 
     initRegionSelect({
+      documentId: documentRecord.id,
+      pages: renderedPages,
+      onHighlightCreated: onHighlightClick,
+    });
+
+    initTextSelection({
       documentId: documentRecord.id,
       pages: renderedPages,
       onHighlightCreated: onHighlightClick,

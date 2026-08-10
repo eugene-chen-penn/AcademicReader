@@ -22,5 +22,6 @@ export function highlightRecordToHighlight(record: HighlightRecord): Highlight {
     crop_image_url: record.crop_blob ? URL.createObjectURL(record.crop_blob) : null,
     reason: record.reason,
     created_at: record.created_at,
+    source: record.source,
   };
 }

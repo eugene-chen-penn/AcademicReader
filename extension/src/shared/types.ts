@@ -26,6 +26,8 @@ export type Highlight = {
   crop_image_url?: string | null;
   reason?: string | null;
   created_at: string;
+  // "text"-type only -- see shared/db.ts's HighlightRecord.source doc comment.
+  source?: "scan" | "manual";
 };
 
 export type Message = {

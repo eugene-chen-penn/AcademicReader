@@ -90,19 +90,43 @@ export async function scanDocument(
     }
   }
 
-  if (existing.length > 0 && !force) {
-    for (const h of existing) {
-      onEvent({
-        type: "span",
-        page_number: h.page_number,
-        quoted_text: h.quoted_text ?? "",
-        prefix: h.prefix_context ?? "",
-        suffix: h.suffix_context ?? "",
-        reason: h.reason ?? "",
-        difficulty: h.difficulty as number,
-        highlight_id: h.id,
-      });
-    }
+  const emitSpan = (h: HighlightRecord): void => {
+    onEvent({
+      type: "span",
+      page_number: h.page_number,
+      quoted_text: h.quoted_text ?? "",
+      prefix: h.prefix_context ?? "",
+      suffix: h.suffix_context ?? "",
+      reason: h.reason ?? "",
+      difficulty: h.difficulty as number,
+      highlight_id: h.id,
+    });
+  };
+
+  // "Has text highlights" and "has been scanned" are different things: a
+  // user-selected highlight (source "manual", see viewer/text-selection.ts)
+  // populates `existing` without a real scan ever having run. Gating the
+  // skip-scan cache hit on THAT would silently break auto-scan for any
+  // document the user has ever manually highlighted something in. Legacy
+  // rows predating the `source` field have it undefined, which counts as
+  // "scan" here (`!== "manual"`) for backward compatibility.
+  const scanSourced = existing.filter((h) => h.source !== "manual");
+
+  // Manual highlights are deliberately NEVER replayed through this
+  // span-event pipeline (in either branch below): handleSpan
+  // (scan-controller.ts) resolves a span's quoted_text against EVERY page
+  // via fuzzy phrase search, by design, so cross-page/repeat occurrences of
+  // an LLM-flagged CONCEPT all share one highlight -- exactly wrong for a
+  // manual selection, where the user picked ONE specific occurrence, not
+  // "everywhere this phrase appears" (a real bug caught in testing: a
+  // 1-occurrence manual highlight came back as 5 after a rescan, since its
+  // quoted_text happened to repeat elsewhere in the document). Manual
+  // highlights already have their own resolved `rects` from creation time
+  // (see text-selection.ts's patchHighlightRects call) and are redrawn
+  // directly from that stored position by viewer.ts, the same way region
+  // highlights are -- never re-resolved by search at all.
+  if (scanSourced.length > 0 && !force) {
+    for (const h of scanSourced) emitSpan(h);
     onEvent({ type: "done" });
     return;
   }

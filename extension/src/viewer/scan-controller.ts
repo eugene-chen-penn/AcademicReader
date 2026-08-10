@@ -16,9 +16,11 @@ import {
   extractPageText,
   resolveAllOccurrences,
   matchedRangesToRects,
+  buildSearchNormalized,
   type TextItem,
   type IndexMapEntry,
   type PixelRect,
+  type SearchNormalized,
 } from "./text-anchor";
 import { scanDocument, patchHighlightRects, type ScanEvent } from "../shared/api-client/scan";
 
@@ -241,6 +243,12 @@ interface PageContext {
   items: TextItem[];
   normalizedText: string;
   indexMap: IndexMapEntry[];
+  // Built once per page here rather than inside resolveAllOccurrences: this
+  // function sweeps EVERY highlight against EVERY page (see handleSpan), so
+  // without hoisting this out, an N-highlight document would re-normalize
+  // each page's full text N times over -- pure redundant work, since the
+  // page's own text never changes across those calls.
+  search: SearchNormalized;
 }
 
 function isTextItem(item: unknown): item is TextItem {
@@ -254,7 +262,8 @@ async function buildPageContexts(pages: PageRenderInfo[]): Promise<Map<number, P
       const textContent = await info.page.getTextContent();
       const items = textContent.items.filter(isTextItem);
       const { normalizedText, indexMap } = extractPageText(items);
-      contexts.set(info.pageNumber, { info, items, normalizedText, indexMap });
+      const search = buildSearchNormalized(normalizedText);
+      contexts.set(info.pageNumber, { info, items, normalizedText, indexMap, search });
     }),
   );
   return contexts;
@@ -281,6 +290,67 @@ function toPersistedRect(rect: PixelRect, scale: number): { x: number; y: number
   return { x: rect.x / scale, y: rect.y / scale, w: rect.w / scale, h: rect.h / scale };
 }
 
+// Only ever holds SCAN-sourced highlight rects (renderScan's own handleSpan
+// pushes into this, below). Manually-created highlights (viewer/
+// text-selection.ts) are deliberately NOT tracked here: they're independent
+// of the scan pipeline entirely -- never subject to a Rescan's clear, never
+// re-resolved by search -- so a rescan can safely wipe everything in this
+// array without touching them. See scan.ts's doc comment on why manual
+// highlights are excluded from its span-replay events.
+function clearRenderedScanHighlights(): void {
+  for (const entry of renderedHighlights) entry.element.remove();
+  renderedHighlights.length = 0;
+}
+
+let scanInProgress = false;
+let rescanMounted = false;
+let rescanButton: HTMLButtonElement | null = null;
+
+function setRescanButtonState(): void {
+  if (!rescanButton) return;
+  rescanButton.disabled = scanInProgress;
+  rescanButton.textContent = scanInProgress ? "Rescanning…" : "Rescan";
+}
+
+/**
+ * Mounts a "Rescan" button that re-runs the LLM scan from scratch
+ * (force=true), for when the user wants to pick up findings a first pass
+ * missed (e.g. after switching to a stronger model in Settings). Disabled
+ * while any scan (initial or rescan) is already in flight -- scanDocument
+ * isn't designed to have two concurrent runs racing on the same document.
+ */
+function mountRescanButton(deps: ScanControllerDeps): void {
+  const toolbar = document.getElementById("toolbar");
+  if (!toolbar) {
+    console.warn("scan-controller: #toolbar not found, rescan button not mounted");
+    return;
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = "ar-rescan-button";
+  button.textContent = "Rescan";
+  button.style.padding = "4px 10px";
+  button.style.borderRadius = "4px";
+  button.style.border = "1px solid #666";
+  button.style.background = "#4a4d50";
+  button.style.color = "#fff";
+  button.style.cursor = "pointer";
+  button.style.fontSize = "13px";
+
+  button.addEventListener("click", () => {
+    if (scanInProgress) return;
+    clearRenderedScanHighlights();
+    void runScan(deps, true).catch((err) => {
+      console.error("scan-controller: rescan failed", err);
+    });
+  });
+
+  toolbar.appendChild(button);
+  rescanButton = button;
+  setRescanButtonState();
+}
+
 export async function initScan(deps: ScanControllerDeps): Promise<void> {
   if (!sliderMounted) {
     sliderMounted = true; // set synchronously before the first await, so a
@@ -288,122 +358,141 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
     // double-mount the control.
     await mountFamiliaritySlider();
   }
+  if (!rescanMounted) {
+    rescanMounted = true;
+    mountRescanButton(deps);
+  }
 
-  const pageContexts = await buildPageContexts(deps.pages);
+  await runScan(deps, false);
+}
 
-  const scanPages = deps.pages.map((p) => ({
-    page_number: p.pageNumber,
-    text: pageContexts.get(p.pageNumber)?.normalizedText ?? "",
-  }));
+async function runScan(deps: ScanControllerDeps, force: boolean): Promise<void> {
+  scanInProgress = true;
+  setRescanButtonState();
 
-  // A given highlight_id can arrive via more than one span event within
-  // the same scan run: scan.ts dedupes the SAME phrase across pages down
-  // to one highlight record, but still emits a span event from every page
-  // that independently reported it (simpler than suppressing there -- see
-  // scan.ts's comment). Since this function itself now searches ALL pages
-  // for every occurrence regardless of which page's event triggered it,
-  // a second event for an already-handled highlight_id would just re-do
-  // the same full sweep and render duplicate rects on top of the first
-  // set. Guard against that here, once per initScan call.
-  const renderedHighlightIds = new Set<number>();
+  try {
+    const pageContexts = await buildPageContexts(deps.pages);
 
-  const handleSpan = (event: Extract<ScanEvent, { type: "span" }>): void => {
-    if (renderedHighlightIds.has(event.highlight_id)) return;
-    renderedHighlightIds.add(event.highlight_id);
+    const scanPages = deps.pages.map((p) => ({
+      page_number: p.pageNumber,
+      text: pageContexts.get(p.pageNumber)?.normalizedText ?? "",
+    }));
 
-    // Constructed from the span event's fields directly. `created_at` is a
-    // client-side placeholder since scan span events don't carry the DB
-    // row's real timestamp -- the sidebar's first-message composition (the
-    // stated consumer) only needs id/type/quoted_text/context/reason/
-    // difficulty, not created_at. All rendered occurrences (see below)
-    // share this SAME object, so clicking any of them opens the identical
-    // sidebar conversation.
-    const highlight: Highlight = {
-      id: event.highlight_id,
-      document_id: deps.documentId,
-      type: "text",
-      page_number: event.page_number,
-      quoted_text: event.quoted_text,
-      prefix_context: event.prefix,
-      suffix_context: event.suffix,
-      rects: null, // filled in below once the first occurrence's rects are known
-      anchor_status: "resolved",
-      difficulty: event.difficulty,
-      reason: event.reason,
-      created_at: new Date().toISOString(),
+    // A given highlight_id can arrive via more than one span event within
+    // the same scan run: scan.ts dedupes the SAME phrase across pages down
+    // to one highlight record, but still emits a span event from every page
+    // that independently reported it (simpler than suppressing there -- see
+    // scan.ts's comment). Since this function itself now searches ALL pages
+    // for every occurrence regardless of which page's event triggered it,
+    // a second event for an already-handled highlight_id would just re-do
+    // the same full sweep and render duplicate rects on top of the first
+    // set. Guard against that here, once per runScan call -- a rescan clears
+    // renderedHighlights first (see mountRescanButton), so this fresh Set is
+    // always consistent with what's actually in the DOM at the start of
+    // this run.
+    const renderedHighlightIds = new Set<number>();
+
+    const handleSpan = (event: Extract<ScanEvent, { type: "span" }>): void => {
+      if (renderedHighlightIds.has(event.highlight_id)) return;
+      renderedHighlightIds.add(event.highlight_id);
+
+      // Constructed from the span event's fields directly. `created_at` is a
+      // client-side placeholder since scan span events don't carry the DB
+      // row's real timestamp -- the sidebar's first-message composition (the
+      // stated consumer) only needs id/type/quoted_text/context/reason/
+      // difficulty, not created_at. All rendered occurrences (see below)
+      // share this SAME object, so clicking any of them opens the identical
+      // sidebar conversation.
+      const highlight: Highlight = {
+        id: event.highlight_id,
+        document_id: deps.documentId,
+        type: "text",
+        page_number: event.page_number,
+        quoted_text: event.quoted_text,
+        prefix_context: event.prefix,
+        suffix_context: event.suffix,
+        rects: null, // filled in below once the first occurrence's rects are known
+        anchor_status: "resolved",
+        difficulty: event.difficulty,
+        reason: event.reason,
+        created_at: new Date().toISOString(),
+      };
+
+      let firstOccurrencePersisted = false;
+      let anyRectsRendered = false;
+
+      // Search EVERY rendered page, not just event.page_number: the phrase
+      // may repeat elsewhere in the document (or more than once on this
+      // same page -- resolveQuote's exact-match-only search used to miss
+      // same-page repeats too), and every occurrence found gets highlighted
+      // and wired to this same `highlight` object/conversation.
+      for (const ctx of pageContexts.values()) {
+        const occurrences = resolveAllOccurrences(ctx.search, ctx.indexMap, event.quoted_text);
+        for (const ranges of occurrences) {
+          const cssRects = matchedRangesToRects(ranges, ctx.items, ctx.info.page, ctx.info.scale);
+          if (cssRects.length === 0) continue;
+
+          for (const rect of cssRects) {
+            const el = renderHighlightRect(ctx.info.container, rect, () => deps.onHighlightClick(highlight));
+            el.style.display = shouldShowAtFamiliarityLevel(event.difficulty, currentFamiliarityLevel)
+              ? ""
+              : "none";
+            renderedHighlights.push({ element: el, difficulty: event.difficulty });
+          }
+          anyRectsRendered = true;
+
+          // Persist rects for the first occurrence only -- see
+          // toPersistedRect's doc comment and patchHighlightRects's own
+          // contract; these aren't actually re-read to render on reload
+          // (rects are always re-resolved fresh, as this whole function
+          // does), so there's no benefit to a PATCH call per occurrence.
+          if (!firstOccurrencePersisted) {
+            firstOccurrencePersisted = true;
+            // Persisted/"PDF-user-space" units per patchHighlightRects's
+            // contract, but see toPersistedRect's doc comment: this is
+            // really CSS-px-at-scale-1 (top-left origin, y-down), not true
+            // bottom-left-origin PDF user space -- the y-flip is already
+            // baked in and dividing by scale just undoes the zoom
+            // multiplication, not the flip.
+            const persistedRects = cssRects.map((r) => toPersistedRect(r, ctx.info.scale));
+            highlight.rects = persistedRects;
+            patchHighlightRects(event.highlight_id, persistedRects, "resolved").catch((err) => {
+              console.warn(`scan-controller: failed to persist rects for highlight ${event.highlight_id}`, err);
+            });
+          }
+        }
+      }
+
+      if (!anyRectsRendered) {
+        console.warn(
+          `scan-controller: could not resolve any occurrence of highlight ${event.highlight_id} on any page; skipping render`,
+        );
+      }
     };
 
-    let firstOccurrencePersisted = false;
-    let anyRectsRendered = false;
-
-    // Search EVERY rendered page, not just event.page_number: the phrase
-    // may repeat elsewhere in the document (or more than once on this
-    // same page -- resolveQuote's exact-match-only search used to miss
-    // same-page repeats too), and every occurrence found gets highlighted
-    // and wired to this same `highlight` object/conversation.
-    for (const ctx of pageContexts.values()) {
-      const occurrences = resolveAllOccurrences(ctx.normalizedText, ctx.indexMap, event.quoted_text);
-      for (const ranges of occurrences) {
-        const cssRects = matchedRangesToRects(ranges, ctx.items, ctx.info.page, ctx.info.scale);
-        if (cssRects.length === 0) continue;
-
-        for (const rect of cssRects) {
-          const el = renderHighlightRect(ctx.info.container, rect, () => deps.onHighlightClick(highlight));
-          el.style.display = shouldShowAtFamiliarityLevel(event.difficulty, currentFamiliarityLevel)
-            ? ""
-            : "none";
-          renderedHighlights.push({ element: el, difficulty: event.difficulty });
+    const onEvent = (event: ScanEvent): void => {
+      try {
+        if (event.type === "scan_started") {
+          mountScanProgress(event.total_pages);
+        } else if (event.type === "span") {
+          handleSpan(event);
+        } else if (event.type === "page_complete") {
+          advanceScanProgress();
+        } else if (event.type === "error") {
+          console.warn(`scan-controller: scan error on page ${event.page_number}: ${event.message}`);
+        } else if (event.type === "done") {
+          unmountScanProgress();
         }
-        anyRectsRendered = true;
-
-        // Persist rects for the first occurrence only -- see
-        // toPersistedRect's doc comment and patchHighlightRects's own
-        // contract; these aren't actually re-read to render on reload
-        // (rects are always re-resolved fresh, as this whole function
-        // does), so there's no benefit to a PATCH call per occurrence.
-        if (!firstOccurrencePersisted) {
-          firstOccurrencePersisted = true;
-          // Persisted/"PDF-user-space" units per patchHighlightRects's
-          // contract, but see toPersistedRect's doc comment: this is
-          // really CSS-px-at-scale-1 (top-left origin, y-down), not true
-          // bottom-left-origin PDF user space -- the y-flip is already
-          // baked in and dividing by scale just undoes the zoom
-          // multiplication, not the flip.
-          const persistedRects = cssRects.map((r) => toPersistedRect(r, ctx.info.scale));
-          highlight.rects = persistedRects;
-          patchHighlightRects(event.highlight_id, persistedRects, "resolved").catch((err) => {
-            console.warn(`scan-controller: failed to persist rects for highlight ${event.highlight_id}`, err);
-          });
-        }
+      } catch (err) {
+        // A single malformed/unexpected event must not abort the rest of the
+        // stream -- log and keep going.
+        console.warn("scan-controller: error handling scan event", event, err);
       }
-    }
+    };
 
-    if (!anyRectsRendered) {
-      console.warn(
-        `scan-controller: could not resolve any occurrence of highlight ${event.highlight_id} on any page; skipping render`,
-      );
-    }
-  };
-
-  const onEvent = (event: ScanEvent): void => {
-    try {
-      if (event.type === "scan_started") {
-        mountScanProgress(event.total_pages);
-      } else if (event.type === "span") {
-        handleSpan(event);
-      } else if (event.type === "page_complete") {
-        advanceScanProgress();
-      } else if (event.type === "error") {
-        console.warn(`scan-controller: scan error on page ${event.page_number}: ${event.message}`);
-      } else if (event.type === "done") {
-        unmountScanProgress();
-      }
-    } catch (err) {
-      // A single malformed/unexpected event must not abort the rest of the
-      // stream -- log and keep going.
-      console.warn("scan-controller: error handling scan event", event, err);
-    }
-  };
-
-  await scanDocument(deps.documentId, scanPages, onEvent, false);
+    await scanDocument(deps.documentId, scanPages, onEvent, force);
+  } finally {
+    scanInProgress = false;
+    setRescanButtonState();
+  }
 }

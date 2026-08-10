@@ -177,10 +177,14 @@ export function resolveQuote(
   return ranges;
 }
 
-interface SearchNormalized {
+export interface SearchNormalized {
   normalized: string;
   /** offsets[i] = the index into the ORIGINAL text that normalized[i] was produced from. */
   offsets: number[];
+  /** Length of the original (pre-normalization) text -- see resolveAllOccurrences's
+   * end-of-text fallback, since offsets.length (normalized length) generally
+   * differs from the original text's length. */
+  originalLength: number;
 }
 
 /**
@@ -190,8 +194,14 @@ interface SearchNormalized {
  * real [start, end) range in the original text. Whitespace RUNS collapse
  * to one output space (pointing at the run's first original character);
  * every other character maps 1:1.
+ *
+ * Exported so callers that resolve many quotes against the same page (e.g.
+ * scan-controller.ts, sweeping every highlight across every page) can build
+ * this ONCE per page and reuse it, rather than re-normalizing the whole page
+ * text on every single resolveAllOccurrences call -- for N highlights x M
+ * pages that's N*M redundant full-page normalizations otherwise.
  */
-function buildSearchNormalized(text: string): SearchNormalized {
+export function buildSearchNormalized(text: string): SearchNormalized {
   let normalized = "";
   const offsets: number[] = [];
   let lastWasSpace = true; // leading whitespace is already "collapsed away"
@@ -213,28 +223,32 @@ function buildSearchNormalized(text: string): SearchNormalized {
     normalized = normalized.slice(0, -1);
     offsets.pop();
   }
-  return { normalized, offsets };
+  return { normalized, offsets, originalLength: text.length };
 }
 
 /**
- * Finds EVERY occurrence of `quotedText` within `normalizedText`, matching
- * even when capitalization/whitespace/hyphen-style differs slightly from
- * the exact characters a model originally quoted (see
- * normalizePhraseForMatching) -- unlike resolveQuote, which finds only the
- * first EXACT occurrence. Used to highlight repeat occurrences of an
- * already-flagged phrase elsewhere on the same or a different page, all of
- * which get wired to the SAME highlight/conversation by the caller.
- * Returns one MatchedItemRange[] per occurrence found (possibly empty).
+ * Finds EVERY occurrence of `quotedText` within the page text `search` was
+ * built from (via buildSearchNormalized), matching even when capitalization/
+ * whitespace/hyphen-style differs slightly from the exact characters a model
+ * originally quoted (see normalizePhraseForMatching) -- unlike resolveQuote,
+ * which finds only the first EXACT occurrence. Used to highlight repeat
+ * occurrences of an already-flagged phrase elsewhere on the same or a
+ * different page, all of which get wired to the SAME highlight/conversation
+ * by the caller. Returns one MatchedItemRange[] per occurrence found
+ * (possibly empty).
+ *
+ * Takes a pre-built `search` (rather than building it from normalizedText
+ * itself) so a caller resolving many quotes against the same page can build
+ * it once and reuse it -- see buildSearchNormalized's doc comment.
  */
 export function resolveAllOccurrences(
-  normalizedText: string,
+  search: SearchNormalized,
   indexMap: IndexMapEntry[],
   quotedText: string,
 ): MatchedItemRange[][] {
   const target = normalizePhraseForMatching(quotedText);
   if (!target) return [];
 
-  const search = buildSearchNormalized(normalizedText);
   const results: MatchedItemRange[][] = [];
   let searchFrom = 0;
   for (;;) {
@@ -250,7 +264,7 @@ export function resolveAllOccurrences(
     // the only imprecision is that trailing collapsed whitespace right
     // after a match can bleed into this range, which is harmless --
     // whitespace has no glyph to mis-highlight).
-    const originalEnd = matchEndNorm < search.offsets.length ? search.offsets[matchEndNorm] : normalizedText.length;
+    const originalEnd = matchEndNorm < search.offsets.length ? search.offsets[matchEndNorm] : search.originalLength;
 
     const ranges = rangeToMatchedItemRanges(indexMap, originalStart, originalEnd);
     if (ranges.length > 0) results.push(ranges);
