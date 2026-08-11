@@ -28,10 +28,11 @@ const BASE_INSTRUCTIONS =
   "You are a helpful reading assistant embedded in a PDF viewer for academic papers. Answer concisely and at a beginner-friendly level unless the user asks for more depth.";
 
 export function buildChatMessages(params: {
-  highlightType: "text" | "region";
+  highlightType: "text" | "region" | "document";
   quotedText: string | null | undefined;
   prefixContext: string | null | undefined;
   suffixContext: string | null | undefined;
+  fullText?: string | null;
   history: ChatMessage[];
   userContent: string;
 }): ChatMessage[] {
@@ -41,8 +42,10 @@ export function buildChatMessages(params: {
     if (params.prefixContext || params.suffixContext) {
       system += `Surrounding context: ...${params.prefixContext ?? ""} [[HIGHLIGHTED TEXT]] ${params.suffixContext ?? ""}...\n`;
     }
-  } else {
+  } else if (params.highlightType === "region") {
     system = `${BASE_INSTRUCTIONS}\n\nThe user has highlighted a figure or table region on the page. An image of that crop is attached to the latest user message.`;
+  } else {
+    system = `${BASE_INSTRUCTIONS}\n\nThe user is asking about this document. Full text:\n\n${params.fullText ?? ""}`;
   }
 
   const messages: ChatMessage[] = [{ role: "system", content: system }];

@@ -145,6 +145,7 @@
          row, controls added in any order should just line up. */
       #toolbar {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: var(--ar-space-4);
         padding: var(--ar-space-2) var(--ar-space-4);
@@ -336,6 +337,22 @@
          covers the right var(--sidebar-width) of the screen. sidebar.ts
          toggles this class alongside #sidebar-root's own show/hide. */
       #pages.sidebar-open {
+        padding-right: var(--sidebar-width);
+      }
+
+      /* Same problem, same fix, for #topbar: #sidebar-root's z-index (1001)
+         sits above #topbar's (999), so without shrinking #topbar's own
+         content width when the sidebar is open, toolbar controls that land
+         in the sidebar's right var(--sidebar-width) strip are covered and
+         unclickable until the sidebar closes -- discovered when the newly
+         added "Chat about this PDF" button pushed the Rescan button into
+         exactly that strip. #toolbar's `flex-wrap: wrap` (above) then lets
+         any controls that no longer fit reflow onto a second row instead of
+         being clipped; viewer.ts's existing ResizeObserver on #topbar
+         already keeps #pages's padding-top in sync with whatever height
+         that produces. sidebar.ts toggles this class alongside #pages's and
+         #sidebar-root's own show/hide. */
+      #topbar.sidebar-open {
         padding-right: var(--sidebar-width);
       }
 

@@ -38,3 +38,18 @@ export async function createTextHighlight(input: {
   const record = await db.createTextHighlight({ ...input, source: "manual" });
   return highlightRecordToHighlight(record);
 }
+
+// Backs the "Chat about this PDF" toolbar button (viewer.ts) -- exactly one
+// "document"-type highlight per document, get-or-create so reopening the
+// same PDF later resolves to the same highlight_id and therefore the same
+// persisted conversation.
+export async function getOrCreateDocumentChatHighlight(documentId: number): Promise<Highlight> {
+  const record = await db.getOrCreateDocumentChatHighlight(documentId);
+  return highlightRecordToHighlight(record);
+}
+
+// Rollback for a manual highlight text-selection.ts created but couldn't
+// resolve any on-page rects for -- see db.deleteHighlight's doc comment.
+export async function deleteHighlight(id: number): Promise<void> {
+  await db.deleteHighlight(id);
+}

@@ -16,6 +16,7 @@ import {
   createOrGetDocument,
   getDocument as fetchDocumentRecord,
 } from "../shared/api-client/documents";
+import { getOrCreateDocumentChatHighlight } from "../shared/api-client/highlights";
 import type { Highlight } from "../shared/types";
 import { renderHighlightRect } from "./overlay";
 import { initScan } from "./scan-controller";
@@ -86,6 +87,25 @@ function extractFileParam(search: string): string | null {
     return decoded;
   } catch {
     return value; // best effort; let the fetch() below surface the error
+  }
+}
+
+/**
+ * Fallback tab title for a PDF whose metadata has no (or an empty) Title:
+ * the last path segment of its URL, URL-decoded, with a trailing `.pdf`
+ * stripped. Falls back to the generic default if the URL can't be parsed
+ * or has no usable path segment.
+ */
+function deriveTitleFromFileUrl(fileUrl: string): string {
+  try {
+    const url = new URL(fileUrl);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1];
+    if (!last) return "AcademicReader Viewer";
+    const decoded = decodeURIComponent(last);
+    return decoded.replace(/\.pdf$/i, "") || "AcademicReader Viewer";
+  } catch {
+    return "AcademicReader Viewer";
   }
 }
 
@@ -237,6 +257,40 @@ function renderExistingManualTextHighlight(highlight: Highlight, page: RenderedP
   }
 }
 
+// Cap on DocumentRecord.full_text (shared/db.ts), the whole-document text
+// context stored once per unique PDF for the "Chat about this PDF" feature
+// (see shared/llm/prompts.ts's "document" branch). 40,000 characters is
+// roughly 8-10k tokens for typical English prose -- generous enough to fit
+// the full body text of most academic papers (they're usually 6-15 pages)
+// without truncation, while staying well under context-window limits for
+// cheaper/smaller models and avoiding an unbounded IndexedDB write for the
+// rare 100+ page PDF.
+const FULL_TEXT_MAX_CHARS = 40_000;
+
+/**
+ * Concatenates every rendered page's extracted text (via each page's own
+ * `getTextContent()`, independent of scan-controller.ts's normalization --
+ * this text is only ever used as LLM context, never for offset-matching, so
+ * a plain join is sufficient) into one string for storage as
+ * DocumentRecord.full_text, capped at FULL_TEXT_MAX_CHARS with a
+ * truncation note appended if exceeded.
+ */
+async function buildFullText(pages: RenderedPage[]): Promise<string> {
+  const pageTexts = await Promise.all(
+    pages.map(async (p) => {
+      const textContent = await p.page.getTextContent();
+      const items = textContent.items as Array<{ str?: string }>;
+      const text = items.map((item) => item.str ?? "").join(" ");
+      return `--- Page ${p.pageNumber} ---\n\n${text}`;
+    }),
+  );
+  const joined = pageTexts.join("\n\n");
+  if (joined.length > FULL_TEXT_MAX_CHARS) {
+    return `${joined.slice(0, FULL_TEXT_MAX_CHARS)}\n\n[... truncated at ${FULL_TEXT_MAX_CHARS} characters ...]`;
+  }
+  return joined;
+}
+
 function mountSettingsLink(): void {
   const link = document.createElement("button");
   link.type = "button";
@@ -246,6 +300,30 @@ function mountSettingsLink(): void {
     chrome.runtime.openOptionsPage();
   });
   toolbarEl.appendChild(link);
+}
+
+/**
+ * Mounts the "Chat about this PDF" toolbar button (same DOM pattern as
+ * mountSettingsLink above). On click, gets or creates the single
+ * document-scoped chat highlight for `documentId` (shared/db.ts's
+ * getOrCreateDocumentChatHighlight -- exactly one per document, dedup'd
+ * like createOrGetDocument) and opens it in the existing highlight-scoped
+ * sidebar, which is unaware this highlight isn't tied to any visible rect
+ * on the page.
+ */
+function mountDocumentChatButton(documentId: number): void {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "💬 Chat about this PDF";
+  button.className = "ar-document-chat-button";
+  button.addEventListener("click", () => {
+    void getOrCreateDocumentChatHighlight(documentId)
+      .then((highlight) => openSidebar(highlight))
+      .catch((err) => {
+        console.error("viewer: failed to open document chat", err);
+      });
+  });
+  toolbarEl.appendChild(button);
 }
 
 /**
@@ -310,33 +388,49 @@ async function main(): Promise<void> {
     const loadingTask = getDocument({ data: bytes });
     const pdf = await loadingTask.promise;
 
+    // Document identity + tab title, pulled as early as possible (right
+    // after the PDF object itself is available, well before the
+    // potentially-slow page-rendering loop below) so the tab stops showing
+    // the generic "AcademicReader Viewer" placeholder as soon as we know
+    // better, rather than waiting on the rest of the render pipeline.
+    let title: string | undefined;
+    try {
+      const metadata = await pdf.getMetadata();
+      const info = metadata.info as { Title?: string } | undefined;
+      if (info?.Title && info.Title.trim()) title = info.Title.trim();
+    } catch {
+      // Metadata is optional cosmetic data; a failure here must not block
+      // the rest of the flow.
+    }
+    document.title = title || deriveTitleFromFileUrl(fileUrl);
+
     setStatus(`Rendering ${pdf.numPages} page(s) …`);
 
     const renderedPages = await renderPagesConcurrently(pdf, pagesEl);
 
     hideStatus();
 
-    // Document identity + any previously-created highlights (region-type
-    // ones need manual redraw here; text-type ones are replayed by the scan
-    // endpoint itself — see initScan below).
-    let title: string | undefined;
-    try {
-      const metadata = await pdf.getMetadata();
-      const info = metadata.info as { Title?: string } | undefined;
-      if (info?.Title) title = info.Title;
-    } catch {
-      // Metadata is optional cosmetic data; a failure here must not block
-      // the rest of the flow.
-    }
+    // Any previously-created highlights (region-type ones need manual
+    // redraw here; text-type ones are replayed by the scan endpoint itself
+    // — see initScan below). Fetched BEFORE createOrGetDocument so we can
+    // tell whether this document row already exists -- if it does,
+    // createOrGetDocument's dedup-by-content-hash means full_text was
+    // already populated the first time this PDF was ever opened in this
+    // profile, so there's no need to re-extract it (and re-run
+    // page.getTextContent() across every page) on every reopen.
+    const existing = await fetchDocumentRecord(contentHash);
+    const fullText = existing ? undefined : await buildFullText(renderedPages);
 
     const documentRecord = await createOrGetDocument({
       content_hash: contentHash,
       title,
       source_url: fileUrl,
       page_count: pdf.numPages,
+      full_text: fullText,
     });
 
-    const existing = await fetchDocumentRecord(contentHash);
+    mountDocumentChatButton(documentRecord.id);
+
     if (existing) {
       const pageByNumber = new Map(renderedPages.map((p) => [p.pageNumber, p]));
       for (const highlight of existing.highlights) {

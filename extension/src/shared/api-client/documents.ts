@@ -12,6 +12,7 @@ export async function createOrGetDocument(input: {
   title?: string;
   source_url?: string;
   page_count: number;
+  full_text?: string;
 }): Promise<Document> {
   return db.createOrGetDocument(input);
 }

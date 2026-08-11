@@ -37,7 +37,10 @@ export interface ScanControllerDeps {
   onHighlightClick: (highlight: Highlight) => void; // called when a rendered highlight rect is clicked
 }
 
-const STORAGE_KEY = "ar_familiarity_threshold";
+// Scoped per-document (see storageKeyFor below) rather than one global key
+// shared across every PDF -- otherwise setting the slider on PDF A would
+// leak into PDF B on next open.
+const STORAGE_KEY_PREFIX = "ar_familiarity_threshold_";
 const DEFAULT_FAMILIARITY_LEVEL = 5;
 const MIN_FAMILIARITY_LEVEL = 1;
 const MAX_FAMILIARITY_LEVEL = 10;
@@ -94,10 +97,15 @@ function applyFamiliarityFilter(): void {
   }
 }
 
-async function loadStoredFamiliarityLevel(): Promise<number> {
+function storageKeyFor(documentId: number): string {
+  return `${STORAGE_KEY_PREFIX}${documentId}`;
+}
+
+async function loadStoredFamiliarityLevel(documentId: number): Promise<number> {
   try {
-    const stored = await chrome.storage.local.get(STORAGE_KEY);
-    const value = stored[STORAGE_KEY];
+    const key = storageKeyFor(documentId);
+    const stored = await chrome.storage.local.get(key);
+    const value = stored[key];
     if (typeof value === "number" && value >= MIN_FAMILIARITY_LEVEL && value <= MAX_FAMILIARITY_LEVEL) {
       return value;
     }
@@ -107,8 +115,8 @@ async function loadStoredFamiliarityLevel(): Promise<number> {
   return DEFAULT_FAMILIARITY_LEVEL;
 }
 
-async function mountFamiliaritySlider(): Promise<void> {
-  currentFamiliarityLevel = await loadStoredFamiliarityLevel();
+async function mountFamiliaritySlider(documentId: number): Promise<void> {
+  currentFamiliarityLevel = await loadStoredFamiliarityLevel(documentId);
 
   const toolbar = document.getElementById("toolbar");
   if (!toolbar) {
@@ -144,7 +152,7 @@ async function mountFamiliaritySlider(): Promise<void> {
     currentFamiliarityLevel = level;
     valueLabel.textContent = `Showing difficulty ≥ ${level}`;
     applyFamiliarityFilter();
-    chrome.storage.local.set({ [STORAGE_KEY]: level }).catch((err) => {
+    chrome.storage.local.set({ [storageKeyFor(documentId)]: level }).catch((err) => {
       console.warn("scan-controller: failed to persist familiarity level", err);
     });
   };
@@ -337,7 +345,7 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
     sliderMounted = true; // set synchronously before the first await, so a
     // second initScan call landing before this one finishes its await can't
     // double-mount the control.
-    await mountFamiliaritySlider();
+    await mountFamiliaritySlider(deps.documentId);
   }
   if (!rescanMounted) {
     rescanMounted = true;

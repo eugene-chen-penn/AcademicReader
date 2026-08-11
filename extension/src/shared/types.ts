@@ -8,13 +8,22 @@ export type Document = {
   title: string | null;
   source_url: string | null;
   page_count: number;
+  // Whole-document text extracted once at creation time, used as LLM
+  // context for the document-scoped ("Chat about this PDF") conversation --
+  // see shared/db.ts's DocumentRecord.full_text doc comment.
+  full_text?: string | null;
   created_at: string;
 };
 
 export type Highlight = {
   id: number;
   document_id: number;
-  type: "text" | "region";
+  // "document" is a single per-document placeholder highlight (no
+  // quoted_text/bbox/rects) that ties document_id to a highlight_id so the
+  // existing per-highlight message-thread machinery works unchanged for the
+  // whole-document chat feature -- see shared/db.ts's
+  // getOrCreateDocumentChatHighlight.
+  type: "text" | "region" | "document";
   page_number: number;
   quoted_text?: string | null;
   prefix_context?: string | null;

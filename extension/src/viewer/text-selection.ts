@@ -14,7 +14,7 @@
 // from viewport-relative to page-container-relative CSS px.
 
 import type { Highlight } from "../shared/types";
-import { createTextHighlight } from "../shared/api-client/highlights";
+import { createTextHighlight, deleteHighlight } from "../shared/api-client/highlights";
 import { patchHighlightRects } from "../shared/api-client/scan";
 import { renderHighlightRect } from "./overlay";
 
@@ -153,21 +153,19 @@ async function finalizeSelection(
   text: string,
 ): Promise<void> {
   try {
-    const { prefix, suffix } = getSurroundingContext(page.textLayerDiv, range);
-
-    const highlight = await createTextHighlight({
-      document_id: deps.documentId,
-      page_number: page.pageNumber,
-      quoted_text: text,
-      prefix_context: prefix,
-      suffix_context: suffix,
-    });
-
     // range.getClientRects() gives one DOMRect per visual line the
     // selection spans, in viewport coordinates -- subtracting the page
     // container's own viewport position converts to the same
     // container-relative CSS px space renderHighlightRect/overlay.ts expect
     // (the same space scan-controller.ts's matchedRangesToRects produces).
+    // Computed BEFORE creating anything in the DB: if the selection can't
+    // be resolved to any real on-page rect (e.g. it collapsed to
+    // whitespace-only spans, or a browser-specific selection quirk left an
+    // empty range), there is nothing to highlight -- bail out here rather
+    // than writing a highlight row that could never be seen again (nothing
+    // renders it without rects, and viewer.ts's
+    // renderExistingManualTextHighlight early-returns on empty rects on
+    // every future reload too).
     const containerRect = page.container.getBoundingClientRect();
     const cssRects = Array.from(range.getClientRects())
       .map((r) => ({
@@ -177,6 +175,21 @@ async function finalizeSelection(
         h: r.height,
       }))
       .filter((r) => r.w > 0 && r.h > 0);
+
+    if (cssRects.length === 0) {
+      console.warn("text-selection: selection resolved to no visible rects, not creating a highlight");
+      return;
+    }
+
+    const { prefix, suffix } = getSurroundingContext(page.textLayerDiv, range);
+
+    const highlight = await createTextHighlight({
+      document_id: deps.documentId,
+      page_number: page.pageNumber,
+      quoted_text: text,
+      prefix_context: prefix,
+      suffix_context: suffix,
+    });
 
     // Not registered with scan-controller.ts's renderedHighlights tracking
     // (unlike scan-found highlights): manual highlights are never subject
@@ -189,17 +202,23 @@ async function finalizeSelection(
       renderHighlightRect(page.container, rect, () => deps.onHighlightCreated(highlight));
     }
 
-    if (cssRects.length > 0) {
-      const persistedRects = cssRects.map((r) => ({
-        x: r.x / page.scale,
-        y: r.y / page.scale,
-        w: r.w / page.scale,
-        h: r.h / page.scale,
-      }));
-      highlight.rects = persistedRects;
-      patchHighlightRects(highlight.id, persistedRects, "resolved").catch((err) => {
-        console.warn(`text-selection: failed to persist rects for highlight ${highlight.id}`, err);
-      });
+    const persistedRects = cssRects.map((r) => ({
+      x: r.x / page.scale,
+      y: r.y / page.scale,
+      w: r.w / page.scale,
+      h: r.h / page.scale,
+    }));
+    highlight.rects = persistedRects;
+    try {
+      await patchHighlightRects(highlight.id, persistedRects, "resolved");
+    } catch (err) {
+      // The rect overlay above already rendered for THIS session, but a
+      // failed persist means it won't survive reload -- roll back the row
+      // entirely rather than leave a permanently-invisible orphan the next
+      // time this document opens.
+      console.warn(`text-selection: failed to persist rects for highlight ${highlight.id}, rolling back`, err);
+      await deleteHighlight(highlight.id).catch(() => {});
+      return;
     }
 
     deps.onHighlightCreated(highlight);

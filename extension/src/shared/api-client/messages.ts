@@ -51,6 +51,14 @@ export async function postMessage(
 
   let userContent = content;
   if (!userContent) {
+    // Document-scoped chat has no single sensible canned first question the
+    // way "explain this passage/figure" is for text/region -- the sidebar
+    // path (sidebar.ts's loadThread) never calls postMessage with empty
+    // content for a "document" highlight, so reaching here for one is a
+    // caller bug, not a case to silently paper over.
+    if (highlight.type === "document") {
+      throw new Error("postMessage: content is required for document-chat highlights");
+    }
     userContent =
       highlight.type === "text"
         ? `what does "${highlight.quoted_text ?? ""}" mean, explain for beginner concisely`
@@ -66,11 +74,21 @@ export async function postMessage(
     .slice(0, -1)
     .map((m) => ({ role: m.role, content: m.content }));
 
+  // Document-scoped chat needs the document's stored full_text as context
+  // (not available from the highlight row itself -- see shared/db.ts's
+  // DocumentRecord.full_text doc comment).
+  let documentFullText: string | null | undefined;
+  if (highlight.type === "document") {
+    const documentRecord = await db.getDocumentById(highlight.document_id);
+    documentFullText = documentRecord?.full_text ?? null;
+  }
+
   const chatMessages = buildChatMessages({
     highlightType: highlight.type,
     quotedText: highlight.quoted_text,
     prefixContext: highlight.prefix_context,
     suffixContext: highlight.suffix_context,
+    fullText: documentFullText,
     history,
     userContent,
   });
