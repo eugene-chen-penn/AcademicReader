@@ -16,6 +16,14 @@ export type DocumentRecord = {
   title: string | null;
   source_url: string | null;
   page_count: number;
+  // Whole-document text, populated ONCE when this row is first created
+  // (createOrGetDocument's content-hash dedup means this never re-runs for
+  // an already-known PDF) -- see viewer.ts's buildFullText. Used as LLM
+  // context for the document-scoped chat (shared/llm/prompts.ts's
+  // "document" branch); capped there at a few tens of thousands of
+  // characters, so this is never unboundedly large. null for rows created
+  // before this field existed, or if extraction failed/was skipped.
+  full_text: string | null;
   created_at: string;
 };
 
@@ -24,7 +32,13 @@ export type Rect = { x: number; y: number; w: number; h: number };
 export type HighlightRecord = {
   id: number;
   document_id: number;
-  type: "text" | "region";
+  // "document": a single per-document placeholder highlight -- all of
+  // quoted_text/prefix_context/suffix_context/rects/bbox/crop_blob are null
+  // -- that ties document_id to a highlight_id so the existing
+  // per-highlight message-thread machinery (messages.highlight_id) works
+  // unchanged for the whole-document chat feature. See
+  // getOrCreateDocumentChatHighlight below.
+  type: "text" | "region" | "document";
   page_number: number;
   quoted_text: string | null;
   prefix_context: string | null;
@@ -109,6 +123,7 @@ export async function createOrGetDocument(input: {
   title?: string;
   source_url?: string;
   page_count: number;
+  full_text?: string;
 }): Promise<DocumentRecord> {
   const db = await openDatabase();
   const tx = db.transaction("documents", "readwrite");
@@ -126,6 +141,7 @@ export async function createOrGetDocument(input: {
     title: input.title ?? null,
     source_url: input.source_url ?? null,
     page_count: input.page_count,
+    full_text: input.full_text ?? null,
     created_at: nowIso(),
   };
   const id = await requestToPromise(store.add(record) as IDBRequest<number>);
@@ -142,11 +158,19 @@ export async function getDocumentByHash(contentHash: string): Promise<DocumentRe
   return (result as DocumentRecord) ?? null;
 }
 
+export async function getDocumentById(id: number): Promise<DocumentRecord | null> {
+  const db = await openDatabase();
+  const tx = db.transaction("documents", "readonly");
+  const result = await requestToPromise(tx.objectStore("documents").get(id));
+  await txDone(tx);
+  return (result as DocumentRecord) ?? null;
+}
+
 // ---- highlights ----
 
 export async function getHighlightsForDocument(
   documentId: number,
-  type?: "text" | "region",
+  type?: "text" | "region" | "document",
 ): Promise<HighlightRecord[]> {
   const db = await openDatabase();
   const tx = db.transaction("highlights", "readonly");
@@ -221,6 +245,53 @@ export async function createRegionHighlight(input: {
     difficulty: null,
     bbox: input.bbox,
     crop_blob: input.crop_blob,
+    reason: null,
+    created_at: nowIso(),
+  };
+  const id = await requestToPromise(store.add(record) as IDBRequest<number>);
+  await txDone(tx);
+  return { ...record, id };
+}
+
+/**
+ * Get-or-create for the single "document" (whole-document chat) highlight
+ * for `documentId`, mirroring createOrGetDocument's own dedup-in-one-
+ * transaction pattern. At most one "document"-type highlight ever exists
+ * per document: if one already exists (from a prior "Chat about this PDF"
+ * click, this session or an earlier one), it's reused so the conversation
+ * persists; otherwise a fresh placeholder row is inserted with every
+ * text/region-specific field null.
+ */
+export async function getOrCreateDocumentChatHighlight(documentId: number): Promise<HighlightRecord> {
+  const db = await openDatabase();
+  const tx = db.transaction("highlights", "readwrite");
+  const store = tx.objectStore("highlights");
+  const index = store.index("document_id");
+
+  const all = (await requestToPromise(index.getAll(documentId))) as HighlightRecord[];
+  const existing = all.find((h) => h.type === "document");
+  if (existing) {
+    await txDone(tx);
+    return existing;
+  }
+
+  const record: Omit<HighlightRecord, "id"> = {
+    document_id: documentId,
+    type: "document",
+    // 0 is deliberately not a real page number (pages are 1-indexed
+    // throughout this codebase) -- viewer.ts's existing-highlight replay
+    // loop looks up `pageByNumber.get(highlight.page_number)` and skips
+    // anything that misses, which this always does. Don't "fix" this to 1;
+    // a document-chat highlight has no real on-page position to redraw.
+    page_number: 0,
+    quoted_text: null,
+    prefix_context: null,
+    suffix_context: null,
+    rects: null,
+    anchor_status: null,
+    difficulty: null,
+    bbox: null,
+    crop_blob: null,
     reason: null,
     created_at: nowIso(),
   };

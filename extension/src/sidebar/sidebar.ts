@@ -242,6 +242,7 @@ function ensureDom(): SidebarDom {
   closeBtn.addEventListener("click", () => {
     root.style.display = "none";
     document.getElementById("pages")?.classList.remove("sidebar-open");
+    document.getElementById("topbar")?.classList.remove("sidebar-open");
   });
   header.appendChild(closeBtn);
 
@@ -375,7 +376,12 @@ function renderHeader(highlight: Highlight): void {
 
   const label = document.createElement("p");
   label.className = "ar-sidebar-header-label";
-  label.textContent = highlight.type === "text" ? "Selected text" : "Selected region";
+  label.textContent =
+    highlight.type === "text"
+      ? "Selected text"
+      : highlight.type === "region"
+        ? "Selected region"
+        : "Chat about this document";
   headerContent.appendChild(label);
 
   if (highlight.type === "text") {
@@ -385,7 +391,7 @@ function renderHeader(highlight: Highlight): void {
     const truncated = text.length > 240 ? `${text.slice(0, 240)}…` : text;
     quote.textContent = `“${truncated}”`;
     headerContent.appendChild(quote);
-  } else {
+  } else if (highlight.type === "region") {
     const img = document.createElement("img");
     img.className = "ar-sidebar-thumb";
     // crop_image_url is already a ready-to-use blob: URL (see
@@ -394,6 +400,8 @@ function renderHeader(highlight: Highlight): void {
     img.alt = "Selected figure or table region";
     headerContent.appendChild(img);
   }
+  // "document": no quote/image body -- just the label above, ready for the
+  // user's own typed question.
 }
 
 function addBubble(role: "user" | "assistant", text: string, pending = false): HTMLElement {
@@ -435,6 +443,13 @@ async function loadThread(highlight: Highlight, token: number): Promise<void> {
     if (token !== loadToken) return; // a different highlight was opened meanwhile
 
     if (messages.length === 0) {
+      // There's no sensible universal default question for "the whole
+      // paper" the way there is for a specific highlighted passage/figure --
+      // leave the thread empty, ready for the user's own typed question via
+      // the normal input box (handleSend).
+      if (highlight.type === "document") {
+        return;
+      }
       // First click on this highlight: render the auto-composed question
       // immediately for instant feedback, then kick off the real request
       // (postMessage independently composes + persists the same text as
@@ -524,6 +539,11 @@ export function openSidebar(highlight: Highlight): void {
   // centered on the full window width and looks off-center once the
   // sidebar covers the right side of the screen.
   document.getElementById("pages")?.classList.add("sidebar-open");
+  // Shrinks #topbar's own content width to match, so toolbar controls that
+  // would otherwise land under the sidebar's overlay strip reflow instead
+  // of becoming covered/unclickable -- see viewer.html's #topbar.sidebar-open
+  // rule.
+  document.getElementById("topbar")?.classList.add("sidebar-open");
 
   if (highlight.id === currentHighlightId) {
     return;
