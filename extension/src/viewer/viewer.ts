@@ -315,7 +315,7 @@ function mountDocumentChatButton(documentId: number): void {
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = "💬 Chat about this PDF";
-  button.className = "ar-document-chat-button";
+  button.className = "ar-toolbar-btn";
   button.addEventListener("click", () => {
     void getOrCreateDocumentChatHighlight(documentId)
       .then((highlight) => openSidebar(highlight))
