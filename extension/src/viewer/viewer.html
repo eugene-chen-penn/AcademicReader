@@ -41,6 +41,16 @@
         --ar-danger-bg: rgba(220, 90, 90, 0.12);
         --ar-danger-border: rgba(220, 90, 90, 0.4);
         --ar-danger-text: #f2a3a3;
+        /* Opaque pairing for error surfaces with no assured backdrop of
+           their own (#status sits in #topbar, which has no background;
+           .ar-region-error-tip sits directly over the white PDF canvas) --
+           the translucent --ar-danger-bg/-text pair above reads fine over
+           this UI's own dark chrome, but composited over a bright page or
+           arbitrary scrolled content it drops well under WCAG contrast.
+           Same solid color this project shipped with before the token
+           system existed. */
+        --ar-danger-solid-bg: #6b1f1f;
+        --ar-danger-solid-text: #ffffff;
 
         --ar-success-text: #7fd9a8;
         --ar-warn-text: #d9a441;
@@ -123,8 +133,8 @@
       }
 
       #status.error {
-        background: var(--ar-danger-bg);
-        color: var(--ar-danger-text);
+        background: var(--ar-danger-solid-bg);
+        color: var(--ar-danger-solid-text);
         border-bottom-color: var(--ar-danger-border);
       }
 
@@ -278,9 +288,9 @@
 
       .ar-region-error-tip {
         position: absolute;
-        background: var(--ar-danger-bg);
+        background: var(--ar-danger-solid-bg);
         border: 1px solid var(--ar-danger-border);
-        color: var(--ar-danger-text);
+        color: var(--ar-danger-solid-text);
         font-size: 12px;
         padding: 4px 8px;
         border-radius: var(--ar-radius-sm);
@@ -340,12 +350,14 @@
         display: block;
       }
 
-      /* Base look for overlay.ts's renderHighlightRect(). Positioning
-         (left/top/width/height) and stacking (z-index/pointer-events) stay
-         inline (dynamic per-rect and load-bearing for click handling — see
-         overlay.ts's comment on ab71272), but the base background is
-         defined once here and a hover affordance layered on top so a
-         highlight visibly responds to the cursor before it's clicked. */
+      /* Hover affordance for overlay.ts's renderHighlightRect(), layered on
+         top of its inline styles so a highlight visibly responds to the
+         cursor before it's clicked. Positioning (left/top/width/height),
+         stacking (z-index/pointer-events), AND the background color all
+         stay inline in overlay.ts itself (background alongside the
+         load-bearing z-index/pointer-events values — see overlay.ts's
+         comment on ab71272 — rather than split across two files); this
+         rule only adds the outline transition/hover, nothing else. */
       .ar-highlight-rect {
         transition: outline-color 0.12s ease;
         outline: 2px solid transparent;
