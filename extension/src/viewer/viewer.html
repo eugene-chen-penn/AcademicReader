@@ -7,14 +7,85 @@
          (see esbuild.config.js) — needed for LaTeX rendering in the chat sidebar. -->
     <link rel="stylesheet" href="viewer.css" />
     <style>
+      /* ---------------------------------------------------------------
+       * Design tokens shared across the whole extension. This is the one
+       * canonical copy; popup.html and options.html (separate documents,
+       * so a CSS custom property can't cross the boundary) each carry an
+       * identical copy of this block — keep all three in sync if you
+       * touch any value here. sidebar.css / sidebar.ts's SIDEBAR_CSS are
+       * injected into THIS document (#sidebar-root lives in viewer.html),
+       * so they consume these tokens directly via var(--ar-x, <fallback>)
+       * rather than needing their own copy.
+       * --------------------------------------------------------------- */
+      :root {
+        color-scheme: dark;
+
+        --ar-bg: #17181c; /* app chrome: status bar, toolbar */
+        --ar-bg-canvas: #26292c; /* backdrop behind rendered PDF pages */
+        --ar-surface: #1d1f24; /* raised panels: sidebar root */
+        --ar-surface-2: #232429; /* inputs, buttons at rest */
+        --ar-surface-3: #2b2d34; /* hover surfaces, progress track */
+        --ar-border: #34353c;
+        --ar-border-strong: #40424c;
+
+        --ar-text: #e6e6e9;
+        --ar-text-dim: #9a9aa5;
+        --ar-text-faint: #6f6f78;
+
+        --ar-accent: #6c8cff;
+        --ar-accent-hover: #85a0ff;
+        --ar-accent-active: #5877e0;
+        --ar-accent-contrast: #12131a;
+
+        --ar-danger: #dc5a5a;
+        --ar-danger-bg: rgba(220, 90, 90, 0.12);
+        --ar-danger-border: rgba(220, 90, 90, 0.4);
+        --ar-danger-text: #f2a3a3;
+        /* Opaque pairing for error surfaces with no assured backdrop of
+           their own (#status sits in #topbar, which has no background;
+           .ar-region-error-tip sits directly over the white PDF canvas) --
+           the translucent --ar-danger-bg/-text pair above reads fine over
+           this UI's own dark chrome, but composited over a bright page or
+           arbitrary scrolled content it drops well under WCAG contrast.
+           Same solid color this project shipped with before the token
+           system existed. */
+        --ar-danger-solid-bg: #6b1f1f;
+        --ar-danger-solid-text: #ffffff;
+
+        --ar-success-text: #7fd9a8;
+        --ar-warn-text: #d9a441;
+
+        --ar-radius-sm: 4px;
+        --ar-radius: 6px;
+        --ar-radius-lg: 10px;
+
+        --ar-space-1: 4px;
+        --ar-space-2: 8px;
+        --ar-space-3: 12px;
+        --ar-space-4: 16px;
+
+        --ar-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+        --sidebar-width: 360px;
+      }
+
       html,
       body {
         margin: 0;
         padding: 0;
-        background: #525659;
-        color: #eee;
-        font-family: system-ui, sans-serif;
-        --sidebar-width: 360px;
+        background: var(--ar-bg-canvas);
+        color: var(--ar-text);
+        font-family: var(--ar-font);
+      }
+
+      /* Keyboard-accessible focus ring, applied everywhere instead of each
+         control managing its own :focus style. outline-offset keeps the
+         ring from being clipped by a control's own border-radius. */
+      button:focus-visible,
+      input:focus-visible,
+      a:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--ar-accent);
+        outline-offset: 2px;
       }
 
       /* Fixed wrapper around #status + #toolbar so they stay pinned to the
@@ -50,10 +121,11 @@
       }
 
       #status {
-        padding: 8px 16px;
+        padding: var(--ar-space-2) var(--ar-space-4);
         font-size: 13px;
-        background: #333;
-        color: #ccc;
+        background: var(--ar-bg);
+        color: var(--ar-text-dim);
+        border-bottom: 1px solid var(--ar-border);
       }
 
       #status.hidden {
@@ -61,8 +133,9 @@
       }
 
       #status.error {
-        background: #6b1f1f;
-        color: #fff;
+        background: var(--ar-danger-solid-bg);
+        color: var(--ar-danger-solid-text);
+        border-bottom-color: var(--ar-danger-border);
       }
 
       /* Shared mount point for Wave-2 toolbar controls (familiarity slider,
@@ -73,11 +146,156 @@
       #toolbar {
         display: flex;
         align-items: center;
-        gap: 12px;
-        padding: 6px 16px;
-        background: #3a3d40;
-        color: #ddd;
+        gap: var(--ar-space-4);
+        padding: var(--ar-space-2) var(--ar-space-4);
+        background: var(--ar-bg);
+        color: var(--ar-text-dim);
         font-size: 13px;
+        border-bottom: 1px solid var(--ar-border);
+      }
+
+      /* Multi-part controls the independent toolbar tracks append (the
+         familiarity control, scan progress) are plain <div> wrappers with
+         their own internal row of elements; lay those out consistently
+         without any one track having to know about the others' markup.
+         Scoped to div wrappers only, NOT `#toolbar > *` -- applying
+         `display: flex` to the plain <button> controls too would turn
+         their text node into a flex item, which risks the label
+         reflowing/shifting off-center when its content changes (e.g.
+         scan-controller.ts's Rescan/Rescanning… swap). */
+      #toolbar > div {
+        display: flex;
+        align-items: center;
+        gap: var(--ar-space-2);
+      }
+
+      /* Shared button look for every control mounted into #toolbar at
+         runtime (scan-controller.ts's Rescan button, region-select.ts's
+         toggle, viewer.ts's Settings link) plus text-selection.ts's
+         floating "Ask AI" button. Modules toggle classes/attributes only —
+         no more per-module inline .style.xxx. */
+      .ar-toolbar-btn {
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        line-height: 1;
+        padding: 7px 12px;
+        border-radius: var(--ar-radius);
+        border: 1px solid var(--ar-border-strong);
+        background: var(--ar-surface-2);
+        color: var(--ar-text);
+        cursor: pointer;
+        transition:
+          background-color 0.12s ease,
+          border-color 0.12s ease,
+          color 0.12s ease;
+      }
+
+      .ar-toolbar-btn:hover:not(:disabled) {
+        border-color: var(--ar-accent);
+        background: var(--ar-surface-3);
+      }
+
+      .ar-toolbar-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* "On" state for a toggle-style toolbar button (region-select's
+         Select figure/table button while active). */
+      .ar-toolbar-btn.ar-toolbar-btn--active {
+        background: var(--ar-accent);
+        border-color: var(--ar-accent);
+        color: var(--ar-accent-contrast);
+      }
+
+      .ar-toolbar-btn.ar-toolbar-btn--active:hover:not(:disabled) {
+        background: var(--ar-accent-hover);
+        border-color: var(--ar-accent-hover);
+      }
+
+      /* Familiarity slider control (scan-controller.ts). */
+      .ar-familiarity-control {
+        color: var(--ar-text-dim);
+      }
+
+      .ar-familiarity-control input[type="range"] {
+        accent-color: var(--ar-accent);
+        cursor: pointer;
+      }
+
+      .ar-familiarity-value {
+        color: var(--ar-text-faint);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      /* Scan progress bar (scan-controller.ts). Only the fill's width is
+         still set inline by JS — that's live progress data, not styling. */
+      .ar-scan-progress-track {
+        width: 120px;
+        height: 6px;
+        border-radius: 3px;
+        background: var(--ar-surface-3);
+        overflow: hidden;
+      }
+
+      .ar-scan-progress-fill {
+        height: 100%;
+        width: 0%;
+        background: var(--ar-accent);
+        transition: width 0.15s ease;
+      }
+
+      .ar-scan-progress-label {
+        color: var(--ar-text-faint);
+        white-space: nowrap;
+      }
+
+      /* Floating "Ask AI" button (text-selection.ts) — an accent call-to-
+         action rather than a neutral toolbar button, since it appears over
+         page content on selection rather than sitting in the toolbar row.
+         Its position (left/top/transform) stays inline since it's computed
+         per-selection. */
+      .ar-ask-ai-btn {
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 13px;
+        border-radius: var(--ar-radius);
+        border: 1px solid var(--ar-accent);
+        background: var(--ar-accent);
+        color: var(--ar-accent-contrast);
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+        transition: background-color 0.12s ease;
+      }
+
+      .ar-ask-ai-btn:hover {
+        background: var(--ar-accent-hover);
+        border-color: var(--ar-accent-hover);
+      }
+
+      /* Drag-to-select rectangle + its failure tip (region-select.ts). Only
+         geometry (left/top/width/height) stays inline. */
+      .ar-region-drag-box {
+        position: absolute;
+        border: 1px dashed var(--ar-accent);
+        background: rgba(108, 140, 255, 0.15);
+        pointer-events: none;
+        z-index: 500;
+      }
+
+      .ar-region-error-tip {
+        position: absolute;
+        background: var(--ar-danger-solid-bg);
+        border: 1px solid var(--ar-danger-border);
+        color: var(--ar-danger-solid-text);
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: var(--ar-radius-sm);
+        z-index: 501;
+        pointer-events: none;
       }
 
       /* Shared mount point for the sidebar chat panel (Track E). Empty and
@@ -89,9 +307,9 @@
         right: 0;
         bottom: 0;
         width: var(--sidebar-width);
-        background: #202225;
-        color: #eee;
-        box-shadow: -2px 0 8px rgba(0, 0, 0, 0.4);
+        background: var(--ar-surface);
+        color: var(--ar-text);
+        box-shadow: -2px 0 12px rgba(0, 0, 0, 0.45);
         z-index: 1001;
         display: none;
       }
@@ -124,11 +342,30 @@
       .ar-page {
         position: relative;
         background: #fff;
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+        border-radius: 2px;
       }
 
       .ar-page canvas {
         display: block;
+      }
+
+      /* Hover affordance for overlay.ts's renderHighlightRect(), layered on
+         top of its inline styles so a highlight visibly responds to the
+         cursor before it's clicked. Positioning (left/top/width/height),
+         stacking (z-index/pointer-events), AND the background color all
+         stay inline in overlay.ts itself (background alongside the
+         load-bearing z-index/pointer-events values — see overlay.ts's
+         comment on ab71272 — rather than split across two files); this
+         rule only adds the outline transition/hover, nothing else. */
+      .ar-highlight-rect {
+        transition: outline-color 0.12s ease;
+        outline: 2px solid transparent;
+        outline-offset: -2px;
+      }
+
+      .ar-highlight-rect:hover {
+        outline-color: rgba(255, 221, 0, 0.9);
       }
 
       /* Minimal mirror of pdf.js's pdf_viewer.css .textLayer rules, needed

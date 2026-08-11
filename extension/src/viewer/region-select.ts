@@ -75,13 +75,15 @@ export function initRegionSelect(deps: RegionSelectDeps): void {
 
   const button = document.createElement("button");
   button.type = "button";
+  button.className = "ar-toolbar-btn";
   button.textContent = "Select figure/table";
-  applyButtonStyle(button, active);
+  button.setAttribute("aria-pressed", String(active));
   toolbar.appendChild(button);
 
   function setActive(next: boolean): void {
     active = next;
-    applyButtonStyle(button, active);
+    button.classList.toggle("ar-toolbar-btn--active", active);
+    button.setAttribute("aria-pressed", String(active));
     for (const page of deps.pages) {
       page.container.classList.toggle(ACTIVE_CLASS, active);
     }
@@ -99,15 +101,11 @@ export function initRegionSelect(deps: RegionSelectDeps): void {
       const originY = clamp(e.clientY - containerRect.top, 0, containerRect.height);
 
       const box = document.createElement("div");
-      box.style.position = "absolute";
+      box.className = "ar-region-drag-box";
       box.style.left = `${originX}px`;
       box.style.top = `${originY}px`;
       box.style.width = "0px";
       box.style.height = "0px";
-      box.style.border = "1px dashed #2196f3";
-      box.style.background = "rgba(33, 150, 243, 0.15)";
-      box.style.pointerEvents = "none";
-      box.style.zIndex = "500";
       page.container.appendChild(box);
 
       drag = { page, originX, originY, box };
@@ -187,17 +185,6 @@ function normalizeRect(x0: number, y0: number, x1: number, y1: number): CssRect 
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-function applyButtonStyle(button: HTMLButtonElement, active: boolean): void {
-  button.style.padding = "4px 10px";
-  button.style.borderRadius = "4px";
-  button.style.border = active ? "1px solid #2196f3" : "1px solid #666";
-  button.style.background = active ? "#2196f3" : "#4a4d50";
-  button.style.color = "#fff";
-  button.style.cursor = "pointer";
-  button.style.fontSize = "13px";
-  button.setAttribute("aria-pressed", String(active));
 }
 
 async function finalizeSelection(
@@ -295,17 +282,10 @@ function rasterizeCrop(sourceCanvas: HTMLCanvasElement, canvasCssRect: CssRect):
 
 function showTransientError(container: HTMLElement, cssRect: CssRect): void {
   const tip = document.createElement("div");
+  tip.className = "ar-region-error-tip";
   tip.textContent = "Failed to save selection — try again.";
-  tip.style.position = "absolute";
   tip.style.left = `${cssRect.x}px`;
   tip.style.top = `${cssRect.y + cssRect.h + 4}px`;
-  tip.style.background = "#6b1f1f";
-  tip.style.color = "#fff";
-  tip.style.fontSize = "12px";
-  tip.style.padding = "4px 8px";
-  tip.style.borderRadius = "4px";
-  tip.style.zIndex = "501";
-  tip.style.pointerEvents = "none";
   container.appendChild(tip);
   setTimeout(() => tip.remove(), 3000);
 }

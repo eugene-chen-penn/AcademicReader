@@ -93,21 +93,13 @@ export function initTextSelection(deps: TextSelectionDeps): void {
     const button = document.createElement("button");
     button.type = "button";
     button.id = "ar-ask-ai-button";
+    button.className = "ar-ask-ai-btn";
     button.textContent = "Ask AI";
     button.style.position = "fixed";
     button.style.left = `${rect.left + rect.width / 2}px`;
     button.style.top = `${Math.max(4, rect.top - 8)}px`;
     button.style.transform = "translate(-50%, -100%)";
     button.style.zIndex = "1000";
-    button.style.padding = "5px 12px";
-    button.style.borderRadius = "5px";
-    button.style.border = "1px solid #2196f3";
-    button.style.background = "#2196f3";
-    button.style.color = "#fff";
-    button.style.fontSize = "12px";
-    button.style.fontWeight = "600";
-    button.style.cursor = "pointer";
-    button.style.boxShadow = "0 2px 8px rgba(0,0,0,0.35)";
 
     // Selecting text already commits the Range; a mousedown on the button
     // would otherwise collapse that selection (default browser behavior)
