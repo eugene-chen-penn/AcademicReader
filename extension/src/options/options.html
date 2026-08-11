@@ -4,27 +4,71 @@
     <meta charset="utf-8" />
     <title>AcademicReader Settings</title>
     <style>
+      /* Design tokens shared across the extension (viewer/popup/options)
+         — see viewer.html's <style> block for the canonical copy + the
+         note on why each HTML document carries its own literal copy of
+         this block rather than a single shared stylesheet. */
       :root {
         color-scheme: dark;
+
+        --ar-bg: #17181c;
+        --ar-bg-canvas: #26292c;
+        --ar-surface: #1d1f24;
+        --ar-surface-2: #232429;
+        --ar-surface-3: #2b2d34;
+        --ar-border: #34353c;
+        --ar-border-strong: #40424c;
+
+        --ar-text: #e6e6e9;
+        --ar-text-dim: #9a9aa5;
+        --ar-text-faint: #6f6f78;
+
+        --ar-accent: #6c8cff;
+        --ar-accent-hover: #85a0ff;
+        --ar-accent-active: #5877e0;
+        --ar-accent-contrast: #12131a;
+
+        --ar-danger: #dc5a5a;
+        --ar-danger-bg: rgba(220, 90, 90, 0.12);
+        --ar-danger-border: rgba(220, 90, 90, 0.4);
+        --ar-danger-text: #f2a3a3;
+
+        --ar-success-text: #7fd9a8;
+        --ar-warn-text: #d9a441;
+
+        --ar-radius-sm: 4px;
+        --ar-radius: 6px;
+        --ar-radius-lg: 10px;
+
+        --ar-space-1: 4px;
+        --ar-space-2: 8px;
+        --ar-space-3: 12px;
+        --ar-space-4: 16px;
+
+        --ar-font: system-ui, -apple-system, "Segoe UI", sans-serif;
       }
 
       html,
       body {
         margin: 0;
         padding: 0;
-        background: #17181c;
-        color: #e6e6e9;
-        font-family:
-          system-ui,
-          -apple-system,
-          "Segoe UI",
-          sans-serif;
+        background: var(--ar-bg);
+        color: var(--ar-text);
+        font-family: var(--ar-font);
       }
 
       body {
         display: flex;
         justify-content: center;
         padding: 40px 20px 80px;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--ar-accent);
+        outline-offset: 2px;
       }
 
       main {
@@ -38,7 +82,7 @@
       }
 
       p.subtitle {
-        color: #9a9aa5;
+        color: var(--ar-text-dim);
         margin: 0 0 32px;
         font-size: 14px;
         line-height: 1.5;
@@ -75,25 +119,26 @@
       input[type="text"],
       input[type="password"],
       select {
-        background: #232429;
-        border: 1px solid #34353c;
-        border-radius: 6px;
-        color: #e6e6e9;
+        background: var(--ar-surface-2);
+        border: 1px solid var(--ar-border);
+        border-radius: var(--ar-radius);
+        color: var(--ar-text);
         font-size: 14px;
-        padding: 10px 12px;
+        padding: 10px var(--ar-space-3);
         font-family: inherit;
+        transition: border-color 0.12s ease;
       }
 
       input[type="text"]:focus,
       input[type="password"]:focus,
       select:focus {
         outline: none;
-        border-color: #6c8cff;
+        border-color: var(--ar-accent);
       }
 
       .model-row {
         display: flex;
-        gap: 8px;
+        gap: var(--ar-space-2);
         align-items: stretch;
       }
 
@@ -109,29 +154,29 @@
 
       .help {
         font-size: 12px;
-        color: #8b8b95;
+        color: var(--ar-text-faint);
         line-height: 1.5;
       }
 
       .help code {
-        background: #232429;
+        background: var(--ar-surface-2);
         border-radius: 3px;
         padding: 1px 5px;
         font-size: 11px;
       }
 
       .help.warn {
-        color: #d9a441;
+        color: var(--ar-warn-text);
       }
 
       .help.error {
-        color: #f2a3a3;
+        color: var(--ar-danger-text);
       }
 
       .actions {
         display: flex;
         gap: 10px;
-        margin-top: 8px;
+        margin-top: var(--ar-space-2);
         flex-wrap: wrap;
       }
 
@@ -139,29 +184,32 @@
         font-family: inherit;
         font-size: 14px;
         font-weight: 600;
-        border-radius: 6px;
+        border-radius: var(--ar-radius);
         padding: 10px 18px;
         border: 1px solid transparent;
         cursor: pointer;
+        transition:
+          background-color 0.12s ease,
+          border-color 0.12s ease;
       }
 
       button.primary {
-        background: #6c8cff;
-        color: #12131a;
+        background: var(--ar-accent);
+        color: var(--ar-accent-contrast);
       }
 
-      button.primary:hover {
-        background: #85a0ff;
+      button.primary:hover:not(:disabled) {
+        background: var(--ar-accent-hover);
       }
 
       button.secondary {
         background: transparent;
-        border-color: #3c3d45;
-        color: #e6e6e9;
+        border-color: var(--ar-border-strong);
+        color: var(--ar-text);
       }
 
-      button.secondary:hover {
-        border-color: #6c8cff;
+      button.secondary:hover:not(:disabled) {
+        border-color: var(--ar-accent);
       }
 
       button:disabled {
@@ -172,8 +220,8 @@
       .status {
         margin-top: 4px;
         font-size: 13px;
-        padding: 10px 12px;
-        border-radius: 6px;
+        padding: 10px var(--ar-space-3);
+        border-radius: var(--ar-radius);
         display: none;
         line-height: 1.5;
       }
@@ -185,13 +233,13 @@
       .status.ok {
         background: rgba(70, 180, 120, 0.12);
         border: 1px solid rgba(70, 180, 120, 0.4);
-        color: #7fd9a8;
+        color: var(--ar-success-text);
       }
 
       .status.error {
-        background: rgba(220, 90, 90, 0.12);
-        border: 1px solid rgba(220, 90, 90, 0.4);
-        color: #f2a3a3;
+        background: var(--ar-danger-bg);
+        border: 1px solid var(--ar-danger-border);
+        color: var(--ar-danger-text);
       }
 
       .status.info {
@@ -202,8 +250,8 @@
 
       hr {
         border: none;
-        border-top: 1px solid #2a2b31;
-        margin: 8px 0;
+        border-top: 1px solid var(--ar-border);
+        margin: var(--ar-space-2) 0;
       }
     </style>
   </head>

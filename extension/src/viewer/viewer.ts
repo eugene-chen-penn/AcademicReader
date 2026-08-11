@@ -241,7 +241,7 @@ function mountSettingsLink(): void {
   const link = document.createElement("button");
   link.type = "button";
   link.textContent = "⚙ Settings";
-  link.className = "ar-settings-link";
+  link.className = "ar-toolbar-btn ar-settings-link";
   link.addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
   });

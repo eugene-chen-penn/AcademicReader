@@ -118,9 +118,6 @@ async function mountFamiliaritySlider(): Promise<void> {
 
   const wrapper = document.createElement("div");
   wrapper.className = "ar-familiarity-control";
-  wrapper.style.display = "flex";
-  wrapper.style.alignItems = "center";
-  wrapper.style.gap = "8px";
 
   const beginnerLabel = document.createElement("span");
   beginnerLabel.textContent = "Beginner — show more";
@@ -195,25 +192,15 @@ function mountScanProgress(totalPages: number): void {
 
   progressWrapper = document.createElement("div");
   progressWrapper.className = "ar-scan-progress";
-  progressWrapper.style.display = "flex";
-  progressWrapper.style.alignItems = "center";
-  progressWrapper.style.gap = "8px";
 
   const track = document.createElement("div");
-  track.style.width = "120px";
-  track.style.height = "6px";
-  track.style.borderRadius = "3px";
-  track.style.background = "#2a2b31";
-  track.style.overflow = "hidden";
+  track.className = "ar-scan-progress-track";
   track.setAttribute("role", "progressbar");
   track.setAttribute("aria-valuemin", "0");
   track.setAttribute("aria-valuemax", String(totalPages));
 
   progressFill = document.createElement("div");
-  progressFill.style.height = "100%";
-  progressFill.style.width = "0%";
-  progressFill.style.background = "#6c8cff";
-  progressFill.style.transition = "width 0.15s ease";
+  progressFill.className = "ar-scan-progress-fill";
   track.appendChild(progressFill);
 
   progressLabel = document.createElement("span");
@@ -329,14 +316,8 @@ function mountRescanButton(deps: ScanControllerDeps): void {
   const button = document.createElement("button");
   button.type = "button";
   button.id = "ar-rescan-button";
+  button.className = "ar-toolbar-btn";
   button.textContent = "Rescan";
-  button.style.padding = "4px 10px";
-  button.style.borderRadius = "4px";
-  button.style.border = "1px solid #666";
-  button.style.background = "#4a4d50";
-  button.style.color = "#fff";
-  button.style.cursor = "pointer";
-  button.style.fontSize = "13px";
 
   button.addEventListener("click", () => {
     if (scanInProgress) return;
