@@ -82,9 +82,18 @@ export async function scanDocument(
 ): Promise<void> {
   const existing = await db.getHighlightsForDocument(documentId, "text");
 
+  // Excludes source: "manual" highlights: this map is consulted by the LLM
+  // scan below to decide "have we already flagged this phrase, reuse that
+  // row" -- if a manual highlight were eligible for reuse here, an LLM
+  // independently flagging the same normalized phrase would hijack it,
+  // routing it through handleSpan's full-page resolveAllOccurrences sweep
+  // and the familiarity filter, and overwriting its creation-time rects.
+  // That's exactly the "1-occurrence manual highlight multiplies across
+  // the document" bug described below for the replay path, reachable here
+  // through a different door (dedup, not replay) if not excluded too.
   const phraseToHighlight = new Map<string, Promise<HighlightRecord>>();
   for (const h of existing) {
-    if (h.quoted_text) {
+    if (h.quoted_text && h.source !== "manual") {
       const key = normalizePhraseForMatching(h.quoted_text);
       if (!phraseToHighlight.has(key)) phraseToHighlight.set(key, Promise.resolve(h));
     }

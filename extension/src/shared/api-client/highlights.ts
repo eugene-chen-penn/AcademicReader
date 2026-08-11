@@ -47,3 +47,9 @@ export async function getOrCreateDocumentChatHighlight(documentId: number): Prom
   const record = await db.getOrCreateDocumentChatHighlight(documentId);
   return highlightRecordToHighlight(record);
 }
+
+// Rollback for a manual highlight text-selection.ts created but couldn't
+// resolve any on-page rects for -- see db.deleteHighlight's doc comment.
+export async function deleteHighlight(id: number): Promise<void> {
+  await db.deleteHighlight(id);
+}

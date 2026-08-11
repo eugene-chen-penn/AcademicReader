@@ -181,6 +181,26 @@ export async function getHighlightsForDocument(
   return filtered.sort((a, b) => a.id - b.id);
 }
 
+/**
+ * Deletes a highlight row (and any messages already attached to it, though
+ * in practice this is only ever called for rollback right after creation,
+ * before a conversation could exist). Used by viewer/text-selection.ts to
+ * clean up a manual highlight it created but couldn't resolve any on-page
+ * rects for -- rather than leaving a permanently invisible, unreachable
+ * highlight row behind.
+ */
+export async function deleteHighlight(id: number): Promise<void> {
+  const db = await openDatabase();
+  const tx = db.transaction(["highlights", "messages"], "readwrite");
+  const messageIndex = tx.objectStore("messages").index("highlight_id");
+  const messageKeys = await requestToPromise(messageIndex.getAllKeys(id));
+  for (const key of messageKeys) {
+    tx.objectStore("messages").delete(key);
+  }
+  tx.objectStore("highlights").delete(id);
+  await txDone(tx);
+}
+
 export async function getHighlight(id: number): Promise<HighlightRecord | null> {
   const db = await openDatabase();
   const tx = db.transaction("highlights", "readonly");
