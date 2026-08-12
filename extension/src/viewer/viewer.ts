@@ -13,6 +13,7 @@
 import { getDocument, GlobalWorkerOptions, TextLayer } from "pdfjs-dist";
 import type { PDFPageProxy } from "pdfjs-dist";
 import {
+  backfillDocumentFullText,
   createOrGetDocument,
   getDocument as fetchDocumentRecord,
 } from "../shared/api-client/documents";
@@ -428,6 +429,17 @@ async function main(): Promise<void> {
       page_count: pdf.numPages,
       full_text: fullText,
     });
+
+    // Backfill for document rows created before full_text existed (any PDF
+    // first opened on v0.4.3 or earlier): createOrGetDocument's early return
+    // on an existing row never re-runs extraction, so without this a
+    // pre-upgrade document's Global PDF Chat would silently answer with no
+    // context forever. One-time per document, same extraction path a fresh
+    // document uses.
+    if (existing && !existing.document.full_text) {
+      const backfilled = await buildFullText(renderedPages);
+      await backfillDocumentFullText(documentRecord.id, backfilled);
+    }
 
     mountDocumentChatButton(documentRecord.id);
 

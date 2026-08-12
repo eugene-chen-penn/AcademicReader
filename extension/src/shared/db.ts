@@ -166,6 +166,24 @@ export async function getDocumentById(id: number): Promise<DocumentRecord | null
   return (result as DocumentRecord) ?? null;
 }
 
+// Backfills full_text on a document row created before the whole-document
+// full_text was populated at creation time -- see
+// viewer.ts's reopen-time backfill call for why this is needed
+// (createOrGetDocument's dedup-by-content-hash never re-runs the extraction
+// for a document that already exists, so pre-existing rows would otherwise
+// keep full_text: null forever).
+export async function updateDocumentFullText(id: number, fullText: string): Promise<void> {
+  const db = await openDatabase();
+  const tx = db.transaction("documents", "readwrite");
+  const store = tx.objectStore("documents");
+  const record = (await requestToPromise(store.get(id))) as DocumentRecord | undefined;
+  if (record) {
+    record.full_text = fullText;
+    store.put(record);
+  }
+  await txDone(tx);
+}
+
 // ---- highlights ----
 
 export async function getHighlightsForDocument(

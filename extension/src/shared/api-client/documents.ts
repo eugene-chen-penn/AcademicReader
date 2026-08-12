@@ -25,3 +25,7 @@ export async function getDocument(
   const highlightRecords = await db.getHighlightsForDocument(document.id);
   return { document, highlights: highlightRecords.map(highlightRecordToHighlight) };
 }
+
+export async function backfillDocumentFullText(id: number, fullText: string): Promise<void> {
+  return db.updateDocumentFullText(id, fullText);
+}
