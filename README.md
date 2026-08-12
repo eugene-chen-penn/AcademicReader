@@ -118,7 +118,9 @@ Three, all sharing the same persistent-chat model:
 - **Auto-scan**: runs automatically when you open a PDF, flagging confusing spans and showing a
   progress bar in the toolbar while it works (skipped on a reopen — cached results replay instantly
   instead). A repeat occurrence of the same flagged phrase elsewhere in the document shares the
-  same highlight and conversation.
+  same highlight and conversation. The toolbar's familiarity slider filters which flagged spans show,
+  and remembers its position per PDF — each document reopens at the level you last set for it, not
+  whatever you last set on some other paper.
 - **Region-select**: the toolbar's **Select figure/table** button, then drag a box over a figure or
   table for an explanation.
 - **Select text, ask AI**: select any text in the PDF and click the **Ask AI** button that appears
@@ -130,12 +132,20 @@ Three, all sharing the same persistent-chat model:
 Settings, or if the first pass missed something. It doesn't touch region or manually-selected
 highlights.
 
+## Global PDF Chat
+
+The toolbar's **💬 Chat about this PDF** button opens a conversation scoped to the whole document
+instead of one highlight — for questions that don't hang off a specific passage ("what's the main
+contribution of this paper?"). It's a single persistent thread per document: closing the tab
+doesn't lose it, and reopening the same PDF reopens the same conversation.
+
 ## What the chat sees
 
-Each highlight's conversation is given the highlighted text plus its immediate surrounding
-context (or the cropped image, for a figure/table region) — not the whole PDF. This keeps
-requests small and fast; it does mean a question can't currently pull in context from elsewhere
-in the paper.
+A per-highlight conversation is given the highlighted text plus its immediate surrounding context
+(or the cropped image, for a figure/table region) — not the whole PDF. This keeps requests small
+and fast; it does mean a question can't pull in context from elsewhere in the paper. Global PDF
+Chat is the exception: it's given the document's full extracted text instead, capped at ~40,000
+characters.
 
 ## Data storage
 
