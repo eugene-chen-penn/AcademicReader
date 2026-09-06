@@ -3,11 +3,12 @@
 A Chrome extension that opens academic PDFs in a custom viewer, flags confusing text with an LLM
 (highlighting every repeat occurrence of a flagged phrase too, all sharing one conversation), lets
 you drag-select figures/tables for explanation, and gives each highlight its own persistent chat.
-Everything runs inside the extension itself — no server, no terminal, no separate process (Codex
-CLI being the one opt-in exception — see [below](#codex-cli-chatgpt-login-no-api-key)). Storage is
-IndexedDB/`chrome.storage.local`, and it talks directly to whatever LLM you configure: Anthropic,
-Google Gemini, DeepSeek, OpenAI, a locally logged-in Codex CLI (no API key), or any
-OpenAI-compatible endpoint.
+Everything runs inside the extension itself — no server, no terminal, no separate process (the
+opt-in [Codex CLI](#codex-cli-chatgpt-login-no-api-key) and [Claude
+CLI](#claude-cli-claude-login-no-api-key) bridges being the exceptions). Storage is
+IndexedDB/`chrome.storage.local`, and it
+talks directly to whatever LLM you configure: Anthropic, Google Gemini, DeepSeek, OpenAI, a locally
+logged-in Codex CLI or Claude CLI (no API key), or any OpenAI-compatible endpoint.
 
 ## Install
 
@@ -54,6 +55,7 @@ dropdown and type the provider-prefixed model string yourself.
 | Google (AI Studio) | `gemini/` | aistudio.google.com |
 | DeepSeek | `deepseek/` | platform.deepseek.com |
 | Codex CLI | `codex-cli/` | none — uses `codex login` (see below) |
+| Claude CLI | `claude-cli/` | none — uses the `claude` CLI login (see below) |
 
 Google's `gemini/` prefix is Google AI Studio (a plain API key) — not `vertex_ai`, which needs GCP
 service-account credentials and isn't supported here. DeepSeek's models have no vision support; if
@@ -95,6 +97,30 @@ Two trade-offs worth knowing before you make this your default: replies arrive a
 few seconds rather than streaming word-by-word (Codex CLI's non-interactive mode doesn't expose
 incremental output), and each call carries meaningfully more overhead than a direct API call
 (Codex's system prompt is built for a coding agent, not a one-line Q&A).
+
+### Claude CLI (Claude login, no API key)
+
+Same idea with [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`): if it's
+installed and signed in, you can draw on that subscription's included usage instead of a separate
+Anthropic API key. Model is picked by alias (`opus`, `sonnet`, `haiku`) — the CLI resolves each to
+the current latest model, and it has no "list models" command, so this is the one provider whose
+model dropdown is a fixed list rather than a live fetch.
+
+One-time setup, for the same reason as Codex CLI (Chrome can't launch local programs itself):
+
+```
+bash native-host/register-claude.sh
+```
+
+It registers an independent bridge (`com.academicreader.claudebridge`) that doesn't touch the
+Codex one — you can register either, both, or neither. Re-run it if you reinstall `claude`
+somewhere new. The bridge runs `claude -p` in a restricted, sandboxed mode (no shell/code tools,
+your `CLAUDE.md` and MCP servers ignored) purely to answer the question.
+
+Trade-offs: the CLI *can* stream, but this bridge returns each reply in one piece, so replies
+arrive all at once after a few seconds; and each call carries more agent-loop overhead than a
+direct API call. Figures/tables are supported — the bridge writes the image to a temp file the CLI
+reads.
 
 ## What auto-detects vs. needs the popup
 
