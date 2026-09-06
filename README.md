@@ -141,7 +141,7 @@ opens it in the reader. Nothing is fetched or granted access to until you do thi
 
 Some things you want to read this way aren't PDFs at all — a WSJ / NYT / blog article, a
 documentation page. The reader-as-PDF path can't handle those (there's no PDF to fetch). Instead,
-open the article, click the toolbar icon, and choose **Read this web page in place (beta)**. It
+open the article, click the toolbar icon, and choose **Read this web page in place**. It
 asks for permission for that site's origin (one-time browser prompt), then overlays the same
 tools directly on the live page — no conversion, no reader-mode stripping, the site stays exactly
 as it renders normally:
@@ -153,9 +153,11 @@ as it renders normally:
   visible page and attached to a chat for explanation. Clicking an `<img>` anchors the highlight
   to that element, so it stays put across reloads even if the page reflows; a free-drag box is
   redrawn from stored page coordinates (best effort).
-- **Auto-detect** — the floating control's **Highlight** dropdown (default **off**, remembered per
-  URL) runs the same AI "flag confusing spans" pass PDFs get: switch it to **auto-detect** and the
-  article's text is chunked, scanned, and the flagged spans rendered inline.
+- **Auto-detect** — the floating control's **Highlight** dropdown runs the same AI "flag confusing
+  spans" pass PDFs get: switch it to **auto-detect** and the article's text is chunked, scanned,
+  and the flagged spans rendered inline. The choice is remembered per URL; its starting value is
+  the **Web page highlighting — default** setting on the extension's options page (**off** unless
+  you change it).
 - **Familiarity slider** — next to the Highlight dropdown, the same 1–10 control the PDF reader
   has: a flagged span shows only when its difficulty is at or above the slider value (left =
   beginner, show everything; right = expert, show only the hardest). Position is remembered per
@@ -169,8 +171,8 @@ as it renders normally:
   brings it back.
 
 The chat panel runs in an isolated extension frame injected into the page, so your provider/API
-key and stored history stay on the extension's side and never touch the website. Known limits of
-the beta: image/region crops can't be taller than the visible viewport; a drag-box highlight (not
+key and stored history stay on the extension's side and never touch the website. Known limits:
+image/region crops can't be taller than the visible viewport; a drag-box highlight (not
 one anchored to an image) can drift if the article's layout changes substantially between visits;
 and the auto-detect scan re-runs from cache on each visit.
 

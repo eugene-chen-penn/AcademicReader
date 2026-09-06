@@ -19,7 +19,13 @@ import type {
   PanelToCsMessage,
   PersistedRegionBox,
 } from "./protocol";
-import { activeKey, familiarityKey, normalizeUrl, scanModeKey } from "./url-key";
+import {
+  activeKey,
+  familiarityKey,
+  normalizeUrl,
+  scanModeKey,
+  SCAN_MODE_DEFAULT_KEY,
+} from "./url-key";
 
 declare global {
   interface Window {
@@ -95,7 +101,6 @@ const MAX_FAMILIARITY = 10;
 const DEFAULT_FAMILIARITY = 5;
 let familiarityLevel = DEFAULT_FAMILIARITY;
 let familiaritySlider: HTMLInputElement | null = null;
-let familiarityValueLabel: HTMLSpanElement | null = null;
 
 // ---------------------------------------------------------------------------
 
@@ -143,8 +148,15 @@ function scanModeStorageKey(): string {
 async function loadWebHighlightMode(): Promise<void> {
   try {
     const key = scanModeStorageKey();
-    const got = await chrome.storage.local.get(key);
-    if (got[key] === "auto" || got[key] === "off") webHighlightMode = got[key];
+    const got = await chrome.storage.local.get([key, SCAN_MODE_DEFAULT_KEY]);
+    if (got[key] === "auto" || got[key] === "off") {
+      webHighlightMode = got[key]; // a per-page choice always wins
+    } else if (
+      got[SCAN_MODE_DEFAULT_KEY] === "auto" ||
+      got[SCAN_MODE_DEFAULT_KEY] === "off"
+    ) {
+      webHighlightMode = got[SCAN_MODE_DEFAULT_KEY]; // global default from the options page
+    }
   } catch {
     /* default "off" */
   }
@@ -163,9 +175,6 @@ async function loadFamiliarityLevel(): Promise<void> {
     /* default DEFAULT_FAMILIARITY */
   }
   if (familiaritySlider) familiaritySlider.value = String(familiarityLevel);
-  if (familiarityValueLabel) {
-    familiarityValueLabel.textContent = `Showing difficulty ≥ ${familiarityLevel}`;
-  }
   applyDifficultyFilter();
 }
 
@@ -286,10 +295,6 @@ function injectStyles(): void {
     #${UI_ID.toolbar} .ar-wr-fam input[type="range"] {
       width: 92px; cursor: pointer; accent-color: #6c8cff; margin: 0;
     }
-    #${UI_ID.toolbar} .ar-wr-fam-value {
-      font-weight: 400; color: #9a9aa5;
-      font-variant-numeric: tabular-nums; white-space: nowrap;
-    }
     #${UI_ID.panel} {
       position: fixed !important; top: 0 !important; right: 0 !important;
       /* An <iframe> is a replaced element: with top:0;bottom:0 and
@@ -386,15 +391,10 @@ function buildToolbar(): void {
   famSlider.title =
     "How familiar are you with this topic? Left = beginner (show more flagged spans), right = expert (show only the hardest).";
 
-  const famValue = document.createElement("span");
-  famValue.className = "ar-wr-fam-value";
-  famValue.textContent = `≥ ${familiarityLevel}`;
-
   const onFamChange = (): void => {
     const level = Number(famSlider.value);
     if (!Number.isFinite(level)) return;
     familiarityLevel = level;
-    famValue.textContent = `≥ ${level}`;
     applyDifficultyFilter();
     chrome.storage.local
       .set({ [familiarityKey(normalizeUrl(location.href))]: level })
@@ -402,9 +402,8 @@ function buildToolbar(): void {
   };
   famSlider.addEventListener("input", onFamChange);
   famSlider.addEventListener("change", onFamChange);
-  famWrap.append(famSlider, famValue);
+  famWrap.append(famSlider);
   familiaritySlider = famSlider;
-  familiarityValueLabel = famValue;
 
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
@@ -1063,7 +1062,6 @@ function teardown(): void {
   document.body.classList.remove("ar-wr-region-cursor");
   hlModeSelect = null;
   familiaritySlider = null;
-  familiarityValueLabel = null;
   familiarityLevel = DEFAULT_FAMILIARITY;
   webScanStarted = false;
   window.__arWebReader = false;

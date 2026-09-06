@@ -39,6 +39,7 @@ import {
   type SettingsInfo,
 } from "../shared/api-client/settings";
 import { fetchModelsForProvider, type CatalogModel } from "../shared/model-catalog";
+import { SCAN_MODE_DEFAULT_KEY } from "../web-reader/url-key";
 
 const CUSTOM_VALUE = "__custom__";
 const SAME_AS_MODEL_VALUE = "";
@@ -57,6 +58,9 @@ const visionModelSelect = document.getElementById("vision-model-select") as HTML
 const visionModelCustomInput = document.getElementById("vision-model-custom") as HTMLInputElement;
 const refreshModelsButton = document.getElementById("refresh-models-button") as HTMLButtonElement;
 const modelFetchStatus = document.getElementById("model-fetch-status") as HTMLDivElement;
+const webHighlightDefaultSelect = document.getElementById(
+  "web-highlight-default",
+) as HTMLSelectElement;
 
 const saveButton = document.getElementById("save-button") as HTMLButtonElement;
 const testButton = document.getElementById("test-button") as HTMLButtonElement;
@@ -369,4 +373,22 @@ testVisionButton.addEventListener("click", async () => {
   }
 });
 
+// Global default for the web-reader Highlight dropdown. Plain
+// chrome.storage.local (same store web-reader.ts reads), not part of the
+// LLM settings schema, so it persists on change rather than via Save.
+async function loadWebHighlightDefault(): Promise<void> {
+  try {
+    const got = await chrome.storage.local.get(SCAN_MODE_DEFAULT_KEY);
+    webHighlightDefaultSelect.value = got[SCAN_MODE_DEFAULT_KEY] === "auto" ? "auto" : "off";
+  } catch {
+    webHighlightDefaultSelect.value = "off";
+  }
+}
+
+webHighlightDefaultSelect.addEventListener("change", () => {
+  const value = webHighlightDefaultSelect.value === "auto" ? "auto" : "off";
+  void chrome.storage.local.set({ [SCAN_MODE_DEFAULT_KEY]: value });
+});
+
+void loadWebHighlightDefault();
 void loadSettings();

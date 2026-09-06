@@ -43,6 +43,12 @@ export function scanModeKey(normalizedUrl: string): string {
   return `ar_wr_scan_${normalizedUrl}`;
 }
 
+// Global fallback for the web-reader Highlight dropdown, set on the options
+// page. Used only when a page has no per-URL scanModeKey value yet -- a
+// per-page choice always wins. `location.href` can't normalize to the bare
+// word "default", so this never collides with a real scanModeKey.
+export const SCAN_MODE_DEFAULT_KEY = "ar_wr_scan_default";
+
 // Set true once this page has been activated at least once. The auto-inject
 // content script (registered per-origin by popup.ts) reads this to decide
 // whether to build its UI on a given URL, and web-reader.ts's ✕ button

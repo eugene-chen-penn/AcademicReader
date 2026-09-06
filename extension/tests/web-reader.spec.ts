@@ -12,6 +12,8 @@
 //      storage, the bundle injects but builds no UI (this is the state on
 //      every non-opted-in page of an origin that has the auto-inject
 //      content script registered).
+//   4. Highlight-mode precedence -- the toolbar dropdown starts from the
+//      global default (options page), but a stored per-URL choice wins.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,14 +52,25 @@ const HIGHLIGHTS = [
 // slider's persist-on-change works) with the per-URL marker web-reader.ts's
 // bootstrap checks. defineProperty (not assignment): headless Chromium's
 // `window.chrome` is a non-writable own property.
-async function installChromeShim(page: Page, opts: { activated: boolean }): Promise<void> {
-  await page.evaluate((activated) => {
+async function installChromeShim(
+  page: Page,
+  opts: {
+    activated: boolean;
+    seed?: Record<string, unknown>;
+    perUrlScanMode?: "off" | "auto";
+  },
+): Promise<void> {
+  await page.evaluate((opts) => {
+    const { activated, seed } = opts;
     const w = window as unknown as Record<string, unknown>;
     w.__sent = [];
     w.__listeners = [];
 
     const store: Record<string, unknown> = {};
     if (activated) store[`ar_wr_active_${location.origin}${location.pathname}`] = true;
+    if (seed) Object.assign(store, seed);
+    if (opts.perUrlScanMode)
+      store[`ar_wr_scan_${location.origin}${location.pathname}`] = opts.perUrlScanMode;
 
     const local = {
       get: (keys: unknown) => {
@@ -115,7 +128,7 @@ async function installChromeShim(page: Page, opts: { activated: boolean }): Prom
       for (const fn of [...(w.__listeners as Array<(m: unknown) => void>)]) fn(m);
     };
     Object.defineProperty(window, "chrome", { value: chromeShim, configurable: true });
-  }, opts.activated);
+  }, opts);
 }
 
 function blockProviders(page: Page): string[] {
@@ -321,4 +334,33 @@ test("stays dormant when the page has no stored 'activated' marker", async ({ pa
     await page.evaluate(() => (window as unknown as { __listeners: unknown[] }).__listeners.length),
   ).toBe(0);
   expect(pageErrors).toEqual([]);
+});
+
+test("Highlight dropdown starts from the global default; a per-page choice wins", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (e) => pageErrors.push(e.message));
+  const providerHits = blockProviders(page);
+
+  // Global default "auto", no per-URL value -> the dropdown opens on "auto".
+  await page.goto(FIXTURE);
+  await installChromeShim(page, { activated: true, seed: { ar_wr_scan_default: "auto" } });
+  await page.addScriptTag({ content: BUNDLE });
+  await page.waitForSelector("#ar-wr-toolbar select");
+  await expect(page.locator("#ar-wr-toolbar select")).toHaveValue("auto");
+
+  // A stored per-URL "off" beats the global "auto".
+  await page.goto(FIXTURE);
+  await installChromeShim(page, {
+    activated: true,
+    seed: { ar_wr_scan_default: "auto" },
+    perUrlScanMode: "off",
+  });
+  await page.addScriptTag({ content: BUNDLE });
+  await page.waitForSelector("#ar-wr-toolbar select");
+  await expect(page.locator("#ar-wr-toolbar select")).toHaveValue("off");
+
+  expect(pageErrors).toEqual([]);
+  expect(providerHits).toEqual([]);
 });
