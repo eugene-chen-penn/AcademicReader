@@ -50,6 +50,7 @@ function toPanelHighlight(h: Highlight): PanelHighlight {
     suffix_context: h.suffix_context ?? null,
     box: h.bbox ?? null,
     web_anchor: h.web_anchor ?? null,
+    difficulty: h.difficulty ?? null,
   };
 }
 
