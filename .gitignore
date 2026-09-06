@@ -5,3 +5,6 @@ extension/playwright-report/
 .DS_Store
 .gstack/
 .claude/
+
+# Python bytecode (native-host/*.py are shipped as source)
+__pycache__/

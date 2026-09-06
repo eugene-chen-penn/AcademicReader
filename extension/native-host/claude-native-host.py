@@ -34,6 +34,7 @@ Response shapes (to the extension):
 import base64
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -99,31 +100,62 @@ def send_message(obj: dict) -> None:
     sys.stdout.buffer.flush()
 
 
-def run_claude_json(args: list[str], timeout: int) -> dict:
-    """Runs `claude <args> --output-format json`, returns the parsed result
-    object. stdin is DEVNULL (nothing to pipe in — the prompt is a
-    positional arg), stdout is captured (never inherited — inheriting it
-    would corrupt the native messaging protocol's own stdout framing),
-    stderr goes to the log file.
+_UNKNOWN_OPT_RE = re.compile(r"unknown option '([^']+)'")
 
-    `claude -p --output-format json` prints a single JSON object as its
-    last stdout line, but may print non-JSON diagnostic lines before it
-    (e.g. "[claude-code:unrecognized_model] {...}" for a bad --model), and
-    its exit code is 0 even for an API-level error — so this parses the
-    last line that decodes to a JSON object with type == "result" and
-    relies on that object's own "is_error" flag, not the return code.
+# Flag-groups that harden a chat run into a clean one-shot sandbox. Applied
+# in order; each is kept only until the installed `claude` rejects it.
+# Older CLI builds predate some of these (e.g. `--permission-prompts`), and
+# commander rejects an unknown option while parsing argv — exit 1,
+# `error: unknown option '<flag>'` on stderr — BEFORE any network call or
+# subscription usage. So a rejected group is dropped and the run retried:
+# no cost on a current CLI, graceful degradation on an old one (a thinner
+# sandbox, still bounded by CHAT_TIMEOUT_SECONDS). Dropping
+# `--permission-prompts` at worst makes a prompt-triggering tool call block
+# until the timeout rather than being denied immediately; `--restricted`
+# (kept) is what actually removes the code-running tools.
+CHAT_HARDENING_FLAGS = [
+    ["--restricted"],
+    ["--strict-mcp-config"],
+    ["--permission-prompts", "none"],
+]
+
+
+def _stderr_tail(text: str, max_lines: int = 3, max_chars: int = 400) -> str:
+    """Last few non-blank stderr lines, length-capped — enough to carry
+    `error: unknown option '...'` or an API error message back to the
+    extension UI without dumping the whole log."""
+    lines = [ln for ln in (text or "").strip().splitlines() if ln.strip()]
+    return " | ".join(lines[-max_lines:])[:max_chars]
+
+
+def _run_claude_once(args: list[str], timeout: int):
+    """One `claude <args>` invocation. Returns (result_obj_or_None,
+    returncode, stderr_text). stdin is DEVNULL (the prompt is a positional
+    arg), stdout is captured (never inherited — that would corrupt the
+    native-messaging stdout framing), stderr is captured and also mirrored
+    to the log file.
+
+    `claude -p --output-format json` prints one JSON object as its last
+    stdout line but may emit non-JSON diagnostics before it, and exits 0
+    even for an API-level error — so the caller keys off the parsed
+    object's own `is_error`, not the return code.
     """
     SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
-    with open(LOG_PATH, "a", encoding="utf-8") as stderr_log:
-        proc = subprocess.run(
-            ["claude", *args],
-            cwd=str(SCRATCH_DIR),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=stderr_log,
-            timeout=timeout,
-            text=True,
-        )
+    proc = subprocess.run(
+        ["claude", *args],
+        cwd=str(SCRATCH_DIR),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        text=True,
+    )
+    if proc.stderr:
+        try:
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(proc.stderr)
+        except OSError:
+            pass
 
     result_obj = None
     for line in proc.stdout.splitlines():
@@ -136,12 +168,49 @@ def run_claude_json(args: list[str], timeout: int) -> dict:
             continue  # a non-JSON diagnostic line; ignore
         if isinstance(obj, dict) and obj.get("type") == "result":
             result_obj = obj
+    return result_obj, proc.returncode, proc.stderr or ""
 
-    if result_obj is None:
+
+def run_claude_json(base_args: list[str], hardening: list[list[str]],
+                    tail_args: list[str], timeout: int) -> dict:
+    """Runs `claude <base_args> <hardening...> <tail_args>` and returns the
+    parsed `type == "result"` object. If the installed CLI rejects one of
+    the `hardening` flag-groups as an unknown option, that group is dropped
+    and the run retried; any other failure raises with a stderr tail so the
+    reason reaches the caller rather than only the log."""
+    groups = [list(g) for g in hardening]
+    last_stderr = ""
+    for _ in range(len(groups) + 1):
+        args = [*base_args]
+        for g in groups:
+            args += g
+        args += tail_args
+
+        result_obj, returncode, stderr_text = _run_claude_once(args, timeout)
+        if result_obj is not None:
+            return result_obj
+        last_stderr = stderr_text or last_stderr
+
+        match = _UNKNOWN_OPT_RE.search(stderr_text)
+        if match:
+            bad = match.group(1)
+            trimmed = [g for g in groups if g[0] != bad]
+            if len(trimmed) != len(groups):
+                log(f"claude rejected {bad!r}; retrying without it")
+                groups = trimmed
+                continue
+
+        tail = _stderr_tail(stderr_text)
         raise RuntimeError(
-            f"claude produced no result object (exit {proc.returncode}); see {LOG_PATH} for details"
+            f"claude produced no result object (exit {returncode})"
+            + (f": {tail}" if tail else f"; see {LOG_PATH} for details")
         )
-    return result_obj
+
+    tail = _stderr_tail(last_stderr)
+    raise RuntimeError(
+        "claude rejected every hardening flag and still produced no result"
+        + (f": {tail}" if tail else f"; see {LOG_PATH} for details")
+    )
 
 
 def handle_list_models() -> dict:
@@ -203,28 +272,23 @@ def handle_chat(request: dict) -> dict:
                 f"The following image file(s) are attached — read them to answer:\n{listing}"
             )
 
-        # --restricted: no command/code-running tools, and settings files
-        #   (user/project/local CLAUDE.md etc.) are ignored — a clean
-        #   sandbox for a one-shot Q&A. It does NOT disable the CLI's
-        #   normal login, so this still draws on the `claude` subscription
-        #   session, no API key.
-        # --strict-mcp-config: also ignore any configured MCP servers.
-        # --permission-prompts none: deny anything that would prompt
-        #   instead of blocking forever waiting on a human.
-        args = [
-            "-p",
-            "--output-format",
-            "json",
-            "--restricted",
-            "--strict-mcp-config",
-            "--permission-prompts",
-            "none",
-        ]
+        # Hardening flags (CHAT_HARDENING_FLAGS) turn this into a clean
+        # one-shot sandbox: --restricted removes the code-running tools and
+        # ignores user/project/local settings (so your CLAUDE.md doesn't
+        # apply) while still using the CLI's normal login — no API key;
+        # --strict-mcp-config ignores configured MCP servers;
+        # --permission-prompts none denies anything that would prompt
+        # instead of blocking. run_claude_json drops any of these that the
+        # installed CLI is too old to recognise and retries.
+        base_args = ["-p", "--output-format", "json"]
+        tail_args: list[str] = []
         if model:
-            args += ["--model", model]
-        args.append(effective_prompt)
+            tail_args += ["--model", model]
+        tail_args.append(effective_prompt)
 
-        result_obj = run_claude_json(args, CHAT_TIMEOUT_SECONDS)
+        result_obj = run_claude_json(
+            base_args, CHAT_HARDENING_FLAGS, tail_args, CHAT_TIMEOUT_SECONDS
+        )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"claude -p timed out after {CHAT_TIMEOUT_SECONDS}s"}
     except Exception as e:  # noqa: BLE001 - surface to the caller, one bad call must not crash the host
