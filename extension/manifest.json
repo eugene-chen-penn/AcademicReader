@@ -66,6 +66,10 @@
     {
       "resources": ["viewer.html", "viewer.js", "viewer.css", "pdf.worker.mjs"],
       "matches": ["<all_urls>"]
+    },
+    {
+      "resources": ["panel.html", "panel.js", "panel.css"],
+      "matches": ["<all_urls>"]
     }
   ]
 }

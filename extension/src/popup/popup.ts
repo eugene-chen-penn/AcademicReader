@@ -13,6 +13,7 @@
 
 const currentUrlEl = document.getElementById("current-url") as HTMLDivElement;
 const openCurrentButton = document.getElementById("open-current-button") as HTMLButtonElement;
+const readWebpageButton = document.getElementById("read-webpage-button") as HTMLButtonElement;
 const urlInput = document.getElementById("url-input") as HTMLInputElement;
 const openUrlButton = document.getElementById("open-url-button") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLDivElement;
@@ -85,10 +86,12 @@ async function init(): Promise<void> {
   if (looksLikeViewerUrl(url)) {
     currentUrlEl.textContent = "Already open in AcademicReader.";
     openCurrentButton.disabled = true;
+    readWebpageButton.disabled = true;
     return;
   }
   if (!url.startsWith("http")) {
     openCurrentButton.disabled = true;
+    readWebpageButton.disabled = true;
   }
 }
 
@@ -103,6 +106,48 @@ openCurrentButton.addEventListener("click", async () => {
   await openInViewer(tab.url, tabId).finally(() => {
     openCurrentButton.disabled = false;
   });
+});
+
+/**
+ * "Read this web page in place": for articles (WSJ etc.) that aren't PDFs
+ * and shouldn't be converted to one. Requests the host permission for this
+ * origin (needed so the injected content script's screenshot-crop can call
+ * captureVisibleTab, and so it persists across navigations), then injects
+ * web-reader.js into the current tab. The content script is idempotent — a
+ * second click on an already-active page is a no-op.
+ */
+readWebpageButton.addEventListener("click", async () => {
+  const tab = await getCurrentTab();
+  if (!tab?.url || !tab.id) {
+    setStatus("error", "No active tab.");
+    return;
+  }
+  let origin: string;
+  try {
+    origin = new URL(tab.url).origin;
+  } catch {
+    setStatus("error", "That doesn't look like a valid URL.");
+    return;
+  }
+  if (!origin.startsWith("http")) {
+    setStatus("error", "Only http(s) pages are supported.");
+    return;
+  }
+
+  readWebpageButton.disabled = true;
+  try {
+    const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
+    if (!granted) {
+      setStatus("error", "Permission was not granted — can't read this page without it.");
+      return;
+    }
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["web-reader.js"] });
+    window.close();
+  } catch (err) {
+    setStatus("error", `Couldn't start: ${(err as Error).message}`);
+  } finally {
+    readWebpageButton.disabled = false;
+  }
 });
 
 openUrlButton.addEventListener("click", async () => {

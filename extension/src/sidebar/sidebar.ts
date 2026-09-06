@@ -218,6 +218,14 @@ type SidebarDom = {
 
 let dom: SidebarDom | null = null;
 let currentHighlightId: number | null = null;
+// Optional extra teardown run when the close button is clicked. The PDF
+// viewer leaves this unset (its #sidebar-root just hides in place); the
+// web-page panel (panel.ts) sets it so it can also collapse the <iframe>
+// this sidebar lives inside, which the sidebar itself can't reach.
+let onCloseHook: (() => void) | null = null;
+export function setSidebarCloseHook(fn: () => void): void {
+  onCloseHook = fn;
+}
 // Bumped on every openSidebar() call for a new highlight; async callbacks
 // compare against the current value and bail out if it's moved on, so a
 // slow listMessages()/postMessage() for a highlight the user has since
@@ -260,6 +268,7 @@ function ensureDom(): SidebarDom {
     root.style.display = "none";
     document.getElementById("pages")?.classList.remove("sidebar-open");
     document.getElementById("topbar")?.classList.remove("sidebar-open");
+    onCloseHook?.();
   });
   header.appendChild(closeBtn);
 

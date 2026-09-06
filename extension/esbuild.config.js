@@ -14,7 +14,7 @@ const watch = process.argv.includes("--watch");
 // a new page (e.g. src/sidebar/sidebar.ts) should follow the same
 // { in: "src/<name>/<name>.ts", out: "<name>" } shape and add "<name>" to
 // the PAGES list below.
-const PAGES = ["viewer", "options", "popup"];
+const PAGES = ["viewer", "options", "popup", "panel"];
 
 const buildOptions = {
   entryPoints: [
@@ -36,6 +36,21 @@ const buildOptions = {
     ".woff": "dataurl",
     ".ttf": "dataurl",
   },
+};
+
+// The web-reader content script is injected via
+// chrome.scripting.executeScript({ files: [...] }), which loads a CLASSIC
+// script, not an ES module. esbuild has no per-entry `format`, so it needs
+// its own build call with `format: "iife"`. Emitting it as "esm" (the shared
+// config above) produces a file that silently fails to execute on injection.
+const contentScriptOptions = {
+  entryPoints: [{ in: "src/web-reader/web-reader.ts", out: "web-reader" }],
+  bundle: true,
+  format: "iife",
+  target: "chrome120",
+  outdir: "dist",
+  sourcemap: true,
+  logLevel: "info",
 };
 
 function copyStaticAssets() {
@@ -71,10 +86,14 @@ function copyStaticAssets() {
 
 if (watch) {
   const ctx = await esbuild.context(buildOptions);
-  await ctx.watch();
+  const csCtx = await esbuild.context(contentScriptOptions);
+  await Promise.all([ctx.watch(), csCtx.watch()]);
   copyStaticAssets();
   console.log("Watching for changes...");
 } else {
-  await esbuild.build(buildOptions);
+  await Promise.all([
+    esbuild.build(buildOptions),
+    esbuild.build(contentScriptOptions),
+  ]);
   copyStaticAssets();
 }

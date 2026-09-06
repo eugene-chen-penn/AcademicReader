@@ -215,6 +215,27 @@
         border-color: var(--ar-accent-hover);
       }
 
+      /* "Highlighting" opt-in dropdown (scan-controller.ts) — auto-scan is
+         off unless this is set to Automatic. */
+      .ar-highlight-mode-control {
+        color: var(--ar-text-dim);
+      }
+
+      .ar-highlight-mode-control label {
+        margin-right: var(--ar-space-1);
+      }
+
+      .ar-highlight-mode-control select {
+        font-family: inherit;
+        font-size: 13px;
+        background: var(--ar-surface-2);
+        color: var(--ar-text);
+        border: 1px solid var(--ar-border-strong);
+        border-radius: var(--ar-radius);
+        padding: 5px 8px;
+        cursor: pointer;
+      }
+
       /* Familiarity slider control (scan-controller.ts). */
       .ar-familiarity-control {
         color: var(--ar-text-dim);

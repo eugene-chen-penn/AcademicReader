@@ -111,26 +111,51 @@ paywalled/DOI-redirected URL — the same popup has an **Open a PDF from any URL
 PDF's URL, and it requests permission for that origin at runtime (a one-time browser prompt) and
 opens it in the reader. Nothing is fetched or granted access to until you do this.
 
+## Reading a web article that isn't a PDF
+
+Some things you want to read this way aren't PDFs at all — a WSJ / NYT / blog article, a
+documentation page. The reader-as-PDF path can't handle those (there's no PDF to fetch). Instead,
+open the article, click the toolbar icon, and choose **Read this web page in place (beta)**. It
+asks for permission for that site's origin (one-time browser prompt), then overlays the same
+tools directly on the live page — no conversion, no reader-mode stripping, the site stays exactly
+as it renders normally:
+
+- **Select text, Ask AI** — select any passage, click the **Ask AI** button that appears; you get
+  a highlight with its own persistent chat, same as in the PDF reader.
+- **Select image** — toggle the button in the small floating control (bottom-right), then either
+  drag a box over a figure/chart or click an image. The crop is captured from a screenshot of the
+  visible page and attached to a chat for explanation.
+- Highlights persist per article (keyed by its URL, tracking params stripped) and are re-anchored
+  by text search when you reopen the page.
+
+The chat panel runs in an isolated extension frame injected into the page, so your provider/API
+key and stored history stay on the extension's side and never touch the website. Known limits of
+the beta: the AI "flag confusing spans" scan is PDF-only (web pages are select-text / select-image
+only); image/region crops can't be taller than the visible viewport; and a highlight can drift if
+the article's layout changes substantially between visits.
+
 ## Ways to create a highlight
 
 Three, all sharing the same persistent-chat model:
 
-- **Auto-scan**: runs automatically when you open a PDF, flagging confusing spans and showing a
-  progress bar in the toolbar while it works (skipped on a reopen — cached results replay instantly
-  instead). A repeat occurrence of the same flagged phrase elsewhere in the document shares the
-  same highlight and conversation. The toolbar's familiarity slider filters which flagged spans show,
-  and remembers its position per PDF — each document reopens at the level you last set for it, not
-  whatever you last set on some other paper.
+- **Scan** (AI "flag confusing spans" pass): **opt-in** — the toolbar's **Highlighting** dropdown
+  is **Off (manual)** by default, so opening a PDF scans nothing. Set it to **Automatic** to scan
+  on open (and it scans the current document right away), or leave it Off and click **Scan** in the
+  toolbar when you want a pass. Either way a repeat occurrence of the same flagged phrase elsewhere
+  in the document shares the same highlight and conversation, and the familiarity slider filters
+  which flagged spans show. Both the Highlighting mode and the slider position are remembered
+  per PDF. Switching the dropdown back to Off removes the scan highlights from the page (your
+  manually-selected ones stay).
 - **Region-select**: the toolbar's **Select figure/table** button, then drag a box over a figure or
   table for an explanation.
 - **Select text, ask AI**: select any text in the PDF and click the **Ask AI** button that appears
-  — for a specific passage you want explained, independent of whatever auto-scan did or didn't
-  flag. Unlike auto-scan, this highlights only the exact spot you selected, not every repeat of
+  — for a specific passage you want explained, independent of whatever the scan did or didn't
+  flag. Unlike the scan, this highlights only the exact spot you selected, not every repeat of
   that phrase elsewhere.
 
-**Rescan** (toolbar) re-runs auto-scan from scratch — useful after switching to a stronger model in
-Settings, or if the first pass missed something. It doesn't touch region or manually-selected
-highlights.
+**Scan / Rescan** (toolbar) runs the LLM pass from scratch — reads "Scan" until something is on the
+page, "Rescan" afterward (useful after switching to a stronger model in Settings, or if the first
+pass missed something). It doesn't touch region or manually-selected highlights.
 
 ## Global PDF Chat
 
