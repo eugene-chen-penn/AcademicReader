@@ -13,6 +13,7 @@
 //   - bridge messages to/from the content script (see protocol.ts).
 
 import {
+  backfillDocumentFullText,
   createOrGetDocument,
   getDocument,
 } from "../shared/api-client/documents";
@@ -20,6 +21,7 @@ import {
   createRegionHighlight,
   createTextHighlight,
 } from "../shared/api-client/highlights";
+import { scanDocument } from "../shared/api-client/scan";
 import type { Highlight } from "../shared/types";
 import { openSidebar, setSidebarCloseHook } from "../sidebar/sidebar";
 import type {
@@ -47,7 +49,21 @@ function toPanelHighlight(h: Highlight): PanelHighlight {
     prefix_context: h.prefix_context ?? null,
     suffix_context: h.suffix_context ?? null,
     box: h.bbox ?? null,
+    web_anchor: h.web_anchor ?? null,
   };
+}
+
+async function sendDocRegistered(): Promise<void> {
+  if (!currentDocKey) return;
+  const record = await getDocument(currentDocKey);
+  if (!record) return;
+  cache(record.highlights);
+  toContentScript({
+    type: "ar-wr-doc-registered",
+    tabId,
+    documentId: record.document.id,
+    highlights: record.highlights.map(toPanelHighlight),
+  });
 }
 
 function toContentScript(msg: PanelToCsMessage): void {
@@ -71,16 +87,34 @@ async function handleRegisterDoc(
     title: msg.title,
     source_url: msg.url,
     page_count: 1,
+    full_text: msg.fullText || undefined,
   });
-  const record = await getDocument(key);
-  if (!record) return;
-  cache(record.highlights);
-  toContentScript({
-    type: "ar-wr-doc-registered",
-    tabId,
-    documentId: record.document.id,
-    highlights: record.highlights.map(toPanelHighlight),
-  });
+  // createOrGetDocument never updates full_text on an existing row, so a doc
+  // registered before per-highlight context existed (or before this build)
+  // keeps full_text: null and every chat gets no page context. Backfill it.
+  const existing = await getDocument(key);
+  if (existing && !existing.document.full_text && msg.fullText) {
+    await backfillDocumentFullText(existing.document.id, msg.fullText);
+  }
+  await sendDocRegistered();
+}
+
+async function handleScanRequest(
+  msg: Extract<CsToPanelMessage, { type: "ar-wr-scan-request" }>,
+): Promise<void> {
+  try {
+    // Chunks are fed to scanDocument as if they were pages: its
+    // phrase-dedup is per-run and its cache check is `source !== "manual"`,
+    // both correct when "page" means "chunk". The created rows' page_number
+    // therefore holds a chunk index -- meaningless for a web doc and, like
+    // bbox above, never to be read by the PDF viewer's replay path.
+    const pages = msg.chunks.map((text, i) => ({ page_number: i + 1, text }));
+    await scanDocument(msg.documentId, pages, () => {}, msg.force);
+  } catch (err) {
+    console.warn("panel: web scan failed", err);
+  }
+  // Re-send the full list either way -- a partial scan still produced rows.
+  await sendDocRegistered();
 }
 
 async function handleCreateText(
@@ -118,16 +152,17 @@ async function handleCreateRegion(
 ): Promise<void> {
   try {
     // INVARIANT: for a web-page region, `bbox` is a page-relative viewport
-    // rect in CSS px (scroll offset already added in), used only by
-    // web-reader.ts to redraw the box on reload. It is NOT the
-    // "CSS-px-at-scale-1, multiply back by page.scale" convention that
-    // viewer.ts's renderExistingRegionHighlight assumes -- a web document row
+    // rect in CSS px (scroll offset already added in) and `page_number` is a
+    // placeholder 1 -- both are read only by web-reader.ts. Neither follows
+    // the PDF viewer's conventions ("CSS-px-at-scale-1 * page.scale" for
+    // bbox, a real 1-indexed page for page_number); a web document row
     // (content_hash "url:...") must never reach that PDF replay path.
     const highlight = await createRegionHighlight({
       document_id: msg.documentId,
       page_number: 1,
       bbox: msg.box,
       image_base64: msg.imageBase64,
+      web_anchor: msg.webAnchor,
     });
     highlightsById.set(highlight.id, highlight);
     toContentScript({
@@ -177,6 +212,9 @@ function onMessage(raw: unknown): void {
       break;
     case "ar-wr-create-region-highlight":
       void handleCreateRegion(msg);
+      break;
+    case "ar-wr-scan-request":
+      void handleScanRequest(msg);
       break;
     case "ar-wr-open-highlight":
       void handleOpenHighlight(msg);

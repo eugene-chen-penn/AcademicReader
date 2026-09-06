@@ -79,6 +79,31 @@ function buildFlatText(root: HTMLElement): FlatText {
 }
 
 /**
+ * Plain readable text of `root` (same node filter as buildFlatText: skips
+ * script/style/media and our own [data-ar-wr] UI), whitespace collapsed,
+ * capped at `maxChars`. Used for the document context every panel chat gets
+ * and, chunked, as the input to the auto-detect scan.
+ */
+export function extractReadableText(root: HTMLElement, maxChars: number): string {
+  const parts: string[] = [];
+  let len = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      if (isSkipped(node)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  for (let n = walker.nextNode(); n && len < maxChars; n = walker.nextNode()) {
+    const t = n.nodeValue!.replace(/\s+/g, " ").trim();
+    if (!t) continue;
+    parts.push(t);
+    len += t.length + 1;
+  }
+  return parts.join(" ").slice(0, maxChars);
+}
+
+/**
  * Maps a character offset within FlatText.text back to a concrete
  * (textNode, offsetWithinNode) DOM position. Clamps to the last node's end
  * if `offset` lands past the final character.

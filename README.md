@@ -150,15 +150,21 @@ as it renders normally:
   a highlight with its own persistent chat, same as in the PDF reader.
 - **Select image** — toggle the button in the small floating control (bottom-right), then either
   drag a box over a figure/chart or click an image. The crop is captured from a screenshot of the
-  visible page and attached to a chat for explanation.
+  visible page and attached to a chat for explanation. Clicking an `<img>` anchors the highlight
+  to that element, so it stays put across reloads even if the page reflows; a free-drag box is
+  redrawn from stored page coordinates (best effort).
+- **Auto-detect** — the floating control's **Highlight** dropdown (default **off**, remembered per
+  URL) runs the same AI "flag confusing spans" pass PDFs get: switch it to **auto-detect** and the
+  article's text is chunked, scanned, and the flagged spans rendered inline. Every flagged span
+  shows (no familiarity slider on web yet).
 - Highlights persist per article (keyed by its URL, tracking params stripped) and are re-anchored
   by text search when you reopen the page.
 
 The chat panel runs in an isolated extension frame injected into the page, so your provider/API
 key and stored history stay on the extension's side and never touch the website. Known limits of
-the beta: the AI "flag confusing spans" scan is PDF-only (web pages are select-text / select-image
-only); image/region crops can't be taller than the visible viewport; and a highlight can drift if
-the article's layout changes substantially between visits.
+the beta: image/region crops can't be taller than the visible viewport; a drag-box highlight (not
+one anchored to an image) can drift if the article's layout changes substantially between visits;
+and the auto-detect scan re-runs from cache on each visit.
 
 ## Ways to create a highlight
 
@@ -193,10 +199,10 @@ doesn't lose it, and reopening the same PDF reopens the same conversation.
 ## What the chat sees
 
 A per-highlight conversation is given the highlighted text plus its immediate surrounding context
-(or the cropped image, for a figure/table region) — not the whole PDF. This keeps requests small
-and fast; it does mean a question can't pull in context from elsewhere in the paper. Global PDF
-Chat is the exception: it's given the document's full extracted text instead, capped at ~40,000
-characters.
+(or the cropped image, for a figure/table region), **and** the first ~4,000 characters of the
+document as background so a question can reach for context elsewhere in the piece. Global PDF Chat
+is given the document's full extracted text instead, capped at ~40,000 characters. Web articles
+get the same treatment — their readable text is extracted on open and stored the same way.
 
 ## Data storage
 

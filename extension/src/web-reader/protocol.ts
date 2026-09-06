@@ -40,6 +40,21 @@ export type CsToPanelMessage =
       url: string;
       normalizedUrl: string;
       title: string;
+      // Extracted readable page text, so every per-highlight chat in the
+      // panel can be given document context (stored as Document.full_text,
+      // the same field the PDF path uses).
+      fullText: string;
+    }
+  | {
+      // Run the auto-detect ("flag confusing spans") scan for this page.
+      // The panel owns the LLM call; it feeds `chunks` to scanDocument as
+      // if they were pages, then re-sends ar-wr-doc-registered with the
+      // updated highlight list. `force` re-runs even if cached.
+      type: "ar-wr-scan-request";
+      tabId: number;
+      documentId: number;
+      chunks: string[];
+      force: boolean;
     }
   | {
       type: "ar-wr-create-text-highlight";
@@ -62,6 +77,10 @@ export type CsToPanelMessage =
       // the chat actually uses.
       box: PersistedRegionBox;
       imageBase64: string;
+      // For a highlight anchored to an <img>: "#<id>" or "src::<url>". Lets
+      // the content script re-find that element on reload and track its live
+      // position instead of trusting the stale `box`.
+      webAnchor: string | null;
     }
   | {
       type: "ar-wr-open-highlight";
@@ -78,7 +97,14 @@ export type PanelHighlight = {
   prefix_context: string | null;
   suffix_context: string | null;
   box: PersistedRegionBox | null;
+  // "#<id>" / "src::<url>" for an image-anchored region highlight, else null.
+  web_anchor: string | null;
 };
+
+// Note: web scan highlights (source "scan") are rendered with NO difficulty
+// filter -- unlike the PDF viewer's familiarity slider, web deliberately
+// shows every flagged span. `page_number` on those rows is a chunk index
+// and is meaningless outside this feature (see panel.ts's invariant note).
 
 export type PanelToCsMessage =
   | {

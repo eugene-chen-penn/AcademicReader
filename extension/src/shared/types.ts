@@ -37,6 +37,9 @@ export type Highlight = {
   created_at: string;
   // "text"-type only -- see shared/db.ts's HighlightRecord.source doc comment.
   source?: "scan" | "manual";
+  // Web-page image-anchored "region" highlights only -- see
+  // shared/db.ts's HighlightRecord.web_anchor doc comment.
+  web_anchor?: string | null;
 };
 
 export type Message = {

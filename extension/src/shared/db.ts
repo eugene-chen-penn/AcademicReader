@@ -60,6 +60,11 @@ export type HighlightRecord = {
   // existed have it undefined, which every read site treats the same as
   // "scan" (`source !== "manual"`) for backward compatibility.
   source?: "scan" | "manual";
+  // Web-page "region" highlights only: "#<id>" or "src::<url>" identifying
+  // the <img> the region was anchored to, so the web reader can re-find that
+  // element on reload and track its live position rather than the stale
+  // bbox. null / undefined for PDF regions and drag-rectangle web regions.
+  web_anchor?: string | null;
 };
 
 export type MessageRecord = {
@@ -267,6 +272,7 @@ export async function createRegionHighlight(input: {
   page_number: number;
   bbox: Rect;
   crop_blob: Blob;
+  web_anchor?: string | null;
 }): Promise<HighlightRecord> {
   const db = await openDatabase();
   const tx = db.transaction("highlights", "readwrite");
@@ -285,6 +291,7 @@ export async function createRegionHighlight(input: {
     crop_blob: input.crop_blob,
     reason: null,
     created_at: nowIso(),
+    web_anchor: input.web_anchor ?? null,
   };
   const id = await requestToPromise(store.add(record) as IDBRequest<number>);
   await txDone(tx);
