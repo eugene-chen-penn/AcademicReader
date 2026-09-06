@@ -45,6 +45,15 @@ const DEFAULT_FAMILIARITY_LEVEL = 5;
 const MIN_FAMILIARITY_LEVEL = 1;
 const MAX_FAMILIARITY_LEVEL = 10;
 
+// Auto-highlight (auto-scan) is opt-in: it does NOT run on open unless the
+// user has set this document's toolbar "Highlighting" dropdown to
+// "Automatic". Default is "off" -- selecting text or a figure region, and
+// the explicit Scan button, all still work regardless. Scoped per-document
+// like the familiarity threshold above, and for the same reason.
+const HL_MODE_STORAGE_PREFIX = "ar_highlight_mode_";
+type HighlightMode = "off" | "auto";
+const DEFAULT_HIGHLIGHT_MODE: HighlightMode = "off";
+
 interface RenderedHighlightEntry {
   element: HTMLElement;
   difficulty: number | null | undefined;
@@ -56,6 +65,7 @@ interface RenderedHighlightEntry {
 // In practice each document view is a fresh page load with a fresh module
 // instance, so this resets naturally per document.
 let sliderMounted = false;
+let highlightModeMounted = false;
 let currentFamiliarityLevel = DEFAULT_FAMILIARITY_LEVEL;
 const renderedHighlights: RenderedHighlightEntry[] = [];
 
@@ -166,6 +176,85 @@ async function mountFamiliaritySlider(documentId: number): Promise<void> {
   // but keeps behavior correct if mountFamiliaritySlider ever runs after
   // some highlights already exist).
   applyFamiliarityFilter();
+}
+
+function highlightModeKeyFor(documentId: number): string {
+  return `${HL_MODE_STORAGE_PREFIX}${documentId}`;
+}
+
+async function loadStoredHighlightMode(documentId: number): Promise<HighlightMode> {
+  try {
+    const key = highlightModeKeyFor(documentId);
+    const stored = await chrome.storage.local.get(key);
+    if (stored[key] === "auto" || stored[key] === "off") return stored[key];
+  } catch (err) {
+    console.warn("scan-controller: failed to read stored highlight mode, using default", err);
+  }
+  return DEFAULT_HIGHLIGHT_MODE;
+}
+
+/**
+ * Mounts the "Highlighting" dropdown into #toolbar. It is the opt-in switch
+ * for auto-scan: "Off (manual)" (the default) means nothing is scanned on
+ * open -- the user drives everything via text/region select and the Scan
+ * button. "Automatic" restores scan-on-open (and immediately runs a scan for
+ * the current document when picked). Choice is persisted per-document.
+ *
+ * initScan reads the stored value itself to decide whether to scan on open;
+ * this control's own change handler covers switching mid-session.
+ */
+async function mountHighlightModeControl(deps: ScanControllerDeps): Promise<void> {
+  const mode = await loadStoredHighlightMode(deps.documentId);
+
+  const toolbar = document.getElementById("toolbar");
+  if (!toolbar) {
+    console.warn("scan-controller: #toolbar not found, highlight mode control not mounted");
+    return;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "ar-highlight-mode-control";
+
+  const label = document.createElement("label");
+  label.htmlFor = "ar-highlight-mode-select";
+  label.textContent = "Highlighting";
+
+  const select = document.createElement("select");
+  select.id = "ar-highlight-mode-select";
+  select.title =
+    "Automatic AI highlighting of confusing text. Off = nothing is scanned automatically; use the Scan button or select text/figures yourself.";
+  for (const [value, text] of [
+    ["off", "Off (manual)"],
+    ["auto", "Automatic"],
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    select.appendChild(opt);
+  }
+  select.value = mode;
+
+  select.addEventListener("change", () => {
+    const next: HighlightMode = select.value === "auto" ? "auto" : "off";
+    chrome.storage.local.set({ [highlightModeKeyFor(deps.documentId)]: next }).catch((err) => {
+      console.warn("scan-controller: failed to persist highlight mode", err);
+    });
+    if (next === "auto") {
+      if (!scanInProgress) {
+        void runScan(deps, false).catch((err) => {
+          console.error("scan-controller: scan (via Highlighting = Automatic) failed", err);
+        });
+      }
+    } else {
+      // Back to manual: pull the auto-scan rects off the page. Manual
+      // text/region highlights are untracked here and are left untouched.
+      clearRenderedScanHighlights();
+      setRescanButtonState(); // nothing on the page now -> button reads "Scan"
+    }
+  });
+
+  wrapper.append(label, select);
+  toolbar.appendChild(wrapper);
 }
 
 // Scan progress bar: mounted lazily on the first "scan_started" event (a
@@ -304,20 +393,28 @@ let rescanButton: HTMLButtonElement | null = null;
 function setRescanButtonState(): void {
   if (!rescanButton) return;
   rescanButton.disabled = scanInProgress;
-  rescanButton.textContent = scanInProgress ? "Rescanning…" : "Rescan";
+  // "Scan" until a scan has actually put something on the page (the common
+  // state now that auto-scan is opt-in); "Rescan" afterward, since then the
+  // button's force=true re-run is genuinely a *re*-scan.
+  rescanButton.textContent = scanInProgress
+    ? "Scanning…"
+    : renderedHighlights.length > 0
+      ? "Rescan"
+      : "Scan";
 }
 
 /**
- * Mounts a "Rescan" button that re-runs the LLM scan from scratch
- * (force=true), for when the user wants to pick up findings a first pass
- * missed (e.g. after switching to a stronger model in Settings). Disabled
- * while any scan (initial or rescan) is already in flight -- scanDocument
- * isn't designed to have two concurrent runs racing on the same document.
+ * Mounts the Scan / Rescan button. It always runs the LLM scan from scratch
+ * (force=true) -- it is both the manual trigger now that auto-scan is
+ * opt-in (label "Scan" until something is on the page) and the "pick up what
+ * a first pass missed" re-run afterward (label "Rescan"). Disabled while any
+ * scan is already in flight -- scanDocument isn't designed to have two
+ * concurrent runs racing on the same document.
  */
 function mountRescanButton(deps: ScanControllerDeps): void {
   const toolbar = document.getElementById("toolbar");
   if (!toolbar) {
-    console.warn("scan-controller: #toolbar not found, rescan button not mounted");
+    console.warn("scan-controller: #toolbar not found, scan button not mounted");
     return;
   }
 
@@ -325,7 +422,6 @@ function mountRescanButton(deps: ScanControllerDeps): void {
   button.type = "button";
   button.id = "ar-rescan-button";
   button.className = "ar-toolbar-btn";
-  button.textContent = "Rescan";
 
   button.addEventListener("click", () => {
     if (scanInProgress) return;
@@ -341,6 +437,10 @@ function mountRescanButton(deps: ScanControllerDeps): void {
 }
 
 export async function initScan(deps: ScanControllerDeps): Promise<void> {
+  if (!highlightModeMounted) {
+    highlightModeMounted = true; // set synchronously before the first await
+    await mountHighlightModeControl(deps);
+  }
   if (!sliderMounted) {
     sliderMounted = true; // set synchronously before the first await, so a
     // second initScan call landing before this one finishes its await can't
@@ -352,7 +452,13 @@ export async function initScan(deps: ScanControllerDeps): Promise<void> {
     mountRescanButton(deps);
   }
 
-  await runScan(deps, false);
+  // Opt-in: only scan on open when this document's Highlighting dropdown is
+  // set to "Automatic". Otherwise the page opens clean and the user drives
+  // scanning via the Scan button (or just uses select-text / select-figure).
+  const mode = await loadStoredHighlightMode(deps.documentId);
+  if (mode === "auto") {
+    await runScan(deps, false);
+  }
 }
 
 async function runScan(deps: ScanControllerDeps, force: boolean): Promise<void> {

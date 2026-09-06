@@ -1,14 +1,16 @@
 {
   "name": "academicreader-extension",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "npm run build && playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
     "@types/chrome": "^0.0.280",
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0"

@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>AcademicReader</title>
+    <!-- esbuild extracts sidebar.ts's `import "katex/dist/katex.min.css"`
+         (reached through panel.ts) into a sibling panel.css, same mechanism
+         as viewer.html's viewer.css. Needed for LaTeX rendering in chat. -->
+    <link rel="stylesheet" href="panel.css" />
+    <style>
+      /* Design tokens -- the fourth literal copy of viewer.html's canonical
+         block (popup.html and options.html carry the other two). This
+         document is a separate origin/frame, so a shared stylesheet can't
+         reach it; keep in sync with viewer.html if a value changes there.
+         sidebar.ts's SIDEBAR_CSS consumes these via var(--ar-x, fallback). */
+      :root {
+        color-scheme: dark;
+
+        --ar-bg: #17181c;
+        --ar-bg-canvas: #26292c;
+        --ar-surface: #1d1f24;
+        --ar-surface-2: #232429;
+        --ar-surface-3: #2b2d34;
+        --ar-border: #34353c;
+        --ar-border-strong: #40424c;
+
+        --ar-text: #e6e6e9;
+        --ar-text-dim: #9a9aa5;
+        --ar-text-faint: #6f6f78;
+
+        --ar-accent: #6c8cff;
+        --ar-accent-hover: #85a0ff;
+        --ar-accent-active: #5877e0;
+        --ar-accent-contrast: #12131a;
+
+        --ar-danger: #dc5a5a;
+        --ar-danger-bg: rgba(220, 90, 90, 0.12);
+        --ar-danger-border: rgba(220, 90, 90, 0.4);
+        --ar-danger-text: #f2a3a3;
+        --ar-danger-solid-bg: #6b1f1f;
+        --ar-danger-solid-text: #ffffff;
+
+        --ar-success-text: #7fd9a8;
+        --ar-warn-text: #d9a441;
+
+        --ar-radius-sm: 4px;
+        --ar-radius: 6px;
+        --ar-radius-lg: 10px;
+
+        --ar-space-1: 4px;
+        --ar-space-2: 8px;
+        --ar-space-3: 12px;
+        --ar-space-4: 16px;
+
+        --ar-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--ar-surface);
+        color: var(--ar-text);
+        font-family: var(--ar-font);
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      [tabindex]:focus-visible {
+        outline: 2px solid var(--ar-accent);
+        outline-offset: 2px;
+      }
+
+      /* In the PDF viewer #sidebar-root is `position: fixed` at the window
+         edge. Here the *iframe* provides that framing (web-reader.ts styles
+         it), so the root just fills the iframe. */
+      #sidebar-root {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar-root"></div>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

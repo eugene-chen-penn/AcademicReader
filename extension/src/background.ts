@@ -31,9 +31,56 @@
 // the field, which defaults to matching more types), that fetch would
 // re-trigger the redirect and the viewer would loop forever on load.
 //
-// Nothing below is currently needed at runtime — this file (and its
-// registration in manifest.json) is kept as the natural place to add any
-// future background-only logic (e.g. context menus), rather than removing
-// the service worker registration entirely for what would likely be a
-// short-lived simplification.
+// The "read a native web page" feature (src/web-reader/, src/panel/) needs
+// two things only the service worker can do for a content script:
+//
+//   1. tell the content script which tab it is running in (a content script
+//      has no chrome.tabs access; sender.tab.id is the authoritative answer)
+//      so it can hand that id to its panel <iframe> for message routing.
+//   2. chrome.tabs.captureVisibleTab — the API for screenshotting the
+//      current tab, used to crop a dragged figure/image region. Content
+//      scripts cannot call it; extension pages can, but routing it here
+//      keeps one capture path and one permission check. Requires a host
+//      permission for the captured tab's origin, which popup.ts requests at
+//      activation time (chrome.permissions.request).
+//
+// Both are request/response (sendResponse) rather than fire-and-forget, so
+// the listener returns `true` to keep the message channel open across the
+// async captureVisibleTab call.
+
+type WebReaderBgMessage =
+  | { type: "ar-wr-get-tab-id" }
+  | { type: "ar-wr-capture-visible-tab" };
+
+chrome.runtime.onMessage.addListener(
+  (message: unknown, sender, sendResponse): boolean | undefined => {
+    const msg = message as WebReaderBgMessage;
+    if (!msg || typeof msg !== "object" || !("type" in msg)) return undefined;
+
+    if (msg.type === "ar-wr-get-tab-id") {
+      sendResponse({ tabId: sender.tab?.id ?? null });
+      return undefined;
+    }
+
+    if (msg.type === "ar-wr-capture-visible-tab") {
+      const windowId = sender.tab?.windowId;
+      const done = (dataUrl?: string): void => {
+        if (chrome.runtime.lastError || !dataUrl) {
+          sendResponse({ error: chrome.runtime.lastError?.message ?? "capture failed" });
+        } else {
+          sendResponse({ dataUrl });
+        }
+      };
+      if (typeof windowId === "number") {
+        chrome.tabs.captureVisibleTab(windowId, { format: "png" }, done);
+      } else {
+        chrome.tabs.captureVisibleTab({ format: "png" }, done);
+      }
+      return true; // async sendResponse
+    }
+
+    return undefined;
+  },
+);
+
 export {};
