@@ -26,6 +26,7 @@ const HIGHLIGHTS = [
     prefix_context: "Widgets are ",
     suffix_context: " during initialization",
     box: null,
+    web_anchor: null,
   },
   {
     id: 202,
@@ -34,6 +35,7 @@ const HIGHLIGHTS = [
     prefix_context: null,
     suffix_context: null,
     box: { x: 24, y: 40, w: 140, h: 70 },
+    web_anchor: null,
   },
 ];
 
@@ -87,6 +89,7 @@ test("renders injected highlight JSON and opens the panel on click, with no API 
           },
         },
       },
+      storage: { local: { get: () => Promise.resolve({}), set: () => Promise.resolve() } },
     };
     w.__emit = (m: unknown) => {
       for (const fn of [...(w.__listeners as Array<(m: unknown) => void>)]) fn(m);
@@ -128,6 +131,13 @@ test("renders injected highlight JSON and opens the panel on click, with no API 
   // Clicking a highlight asks the panel to open that id and reveals the iframe.
   await rects.first().click();
   await expect(page.locator("#ar-wr-panel")).toHaveClass(/ar-wr-open/);
+
+  // The panel iframe reaches the bottom of the viewport (an <iframe> is a
+  // replaced element, so top:0;bottom:0 alone leaves it at its 150px
+  // intrinsic height -- it needs an explicit height).
+  const panelBox = (await page.locator("#ar-wr-panel").boundingBox())!;
+  const vp = page.viewportSize()!;
+  expect(panelBox.height).toBeGreaterThanOrEqual(vp.height - 2);
   const sent = await page.evaluate(() => (window as unknown as { __sent: unknown[] }).__sent);
   expect(sent).toContainEqual(
     expect.objectContaining({ type: "ar-wr-open-highlight", highlightId: 101 }),

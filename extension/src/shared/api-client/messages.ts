@@ -74,14 +74,12 @@ export async function postMessage(
     .slice(0, -1)
     .map((m) => ({ role: m.role, content: m.content }));
 
-  // Document-scoped chat needs the document's stored full_text as context
-  // (not available from the highlight row itself -- see shared/db.ts's
-  // DocumentRecord.full_text doc comment).
-  let documentFullText: string | null | undefined;
-  if (highlight.type === "document") {
-    const documentRecord = await db.getDocumentById(highlight.document_id);
-    documentFullText = documentRecord?.full_text ?? null;
-  }
+  // Every thread gets the document's stored full_text as context now, not
+  // just the document-scoped one: buildChatMessages folds a trimmed slice
+  // into the text/region system prompt and the whole thing into the
+  // document branch. null when extraction was skipped/failed.
+  const documentRecord = await db.getDocumentById(highlight.document_id);
+  const documentFullText: string | null = documentRecord?.full_text ?? null;
 
   const chatMessages = buildChatMessages({
     highlightType: highlight.type,

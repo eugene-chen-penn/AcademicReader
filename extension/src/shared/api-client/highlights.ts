@@ -13,6 +13,7 @@ export async function createRegionHighlight(input: {
   page_number: number;
   bbox: { x: number; y: number; w: number; h: number };
   image_base64: string;
+  web_anchor?: string | null;
 }): Promise<Highlight> {
   const blob = base64OrDataUrlToBlob(input.image_base64);
   const record = await db.createRegionHighlight({
@@ -20,6 +21,7 @@ export async function createRegionHighlight(input: {
     page_number: input.page_number,
     bbox: input.bbox,
     crop_blob: blob,
+    web_anchor: input.web_anchor ?? null,
   });
   return highlightRecordToHighlight(record);
 }

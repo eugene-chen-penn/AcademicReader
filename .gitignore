@@ -4,3 +4,4 @@ extension/test-results/
 extension/playwright-report/
 .DS_Store
 .gstack/
+.claude/

@@ -23,5 +23,6 @@ export function highlightRecordToHighlight(record: HighlightRecord): Highlight {
     reason: record.reason,
     created_at: record.created_at,
     source: record.source,
+    web_anchor: record.web_anchor ?? null,
   };
 }

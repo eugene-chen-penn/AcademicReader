@@ -27,6 +27,14 @@ export function buildScanMessages(pageText: string): ChatMessage[] {
 const BASE_INSTRUCTIONS =
   "You are a helpful reading assistant embedded in a PDF viewer for academic papers. Answer concisely and at a beginner-friendly level unless the user asks for more depth.";
 
+// How much of the document's full text to fold into a text/region
+// per-highlight chat as background context. Kept small: it rides in the
+// system message and is re-sent every turn, and the highlight already
+// carries its own immediate prefix/suffix (or crop image). The
+// document-scoped "Chat about this PDF" thread is unaffected -- it still
+// gets the whole stored full_text.
+const HIGHLIGHT_DOC_CONTEXT_MAX = 4000;
+
 export function buildChatMessages(params: {
   highlightType: "text" | "region" | "document";
   quotedText: string | null | undefined;
@@ -36,14 +44,21 @@ export function buildChatMessages(params: {
   history: ChatMessage[];
   userContent: string;
 }): ChatMessage[] {
+  // Trimmed document text shared by the text/region branches for
+  // "what does this refer to elsewhere" style questions.
+  const docContext = params.fullText
+    ? `\n\nFor reference, here is the start of the document this is from (may be truncated):\n\n${params.fullText.slice(0, HIGHLIGHT_DOC_CONTEXT_MAX)}\n`
+    : "";
+
   let system: string;
   if (params.highlightType === "text") {
     system = `${BASE_INSTRUCTIONS}\n\nThe user has highlighted this passage: "${params.quotedText ?? ""}"\n`;
     if (params.prefixContext || params.suffixContext) {
       system += `Surrounding context: ...${params.prefixContext ?? ""} [[HIGHLIGHTED TEXT]] ${params.suffixContext ?? ""}...\n`;
     }
+    system += docContext;
   } else if (params.highlightType === "region") {
-    system = `${BASE_INSTRUCTIONS}\n\nThe user has highlighted a figure or table region on the page. An image of that crop is attached to the latest user message.`;
+    system = `${BASE_INSTRUCTIONS}\n\nThe user has highlighted a figure or table region on the page. An image of that crop is attached to the latest user message.${docContext}`;
   } else {
     system = `${BASE_INSTRUCTIONS}\n\nThe user is asking about this document. Full text:\n\n${params.fullText ?? ""}`;
   }

@@ -11,7 +11,7 @@
 // every page. Guards against a second injection into the same page.
 
 import { renderHighlightRect } from "../viewer/overlay";
-import { liveRangeContext, resolveQuote } from "./anchor";
+import { extractReadableText, liveRangeContext, resolveQuote } from "./anchor";
 import type {
   CsToBackgroundMessage,
   CsToPanelMessage,
@@ -50,7 +50,8 @@ interface TrackedHighlight {
   id: number;
   kind: HighlightKind;
   range: Range | null; // text highlights: live range, repositioned on reflow
-  box: PersistedRegionBox | null; // region highlights: page-relative CSS px
+  box: PersistedRegionBox | null; // region highlights: page-relative CSS px fallback
+  anchorEl: HTMLElement | null; // region highlights anchored to an <img>: tracked live
   els: HTMLElement[]; // current overlay rectangles
 }
 
@@ -77,6 +78,13 @@ let bodyResizeObserver: ResizeObserver | null = null;
 // teardown can clear it rather than leaving the page's next click dead.
 let clearClickSuppressor: (() => void) | null = null;
 
+// Auto-detect ("flag confusing spans") for this page. Opt-in, per-URL,
+// mirroring the PDF viewer's toolbar dropdown. `webScanStarted` guards
+// against the re-render that follows a scan re-triggering it.
+let webHighlightMode: "off" | "auto" = "off";
+let webScanStarted = false;
+let hlModeSelect: HTMLSelectElement | null = null;
+
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -99,6 +107,7 @@ async function main(): Promise<void> {
   wireRegionSelection();
   wireReflow();
 
+  await loadWebHighlightMode();
   registerDoc();
 }
 
@@ -110,7 +119,54 @@ function registerDoc(): void {
     url: location.href,
     normalizedUrl,
     title: document.title || normalizedUrl,
+    // Document context for every panel chat (stored as Document.full_text).
+    fullText: extractReadableText(document.body, 40000),
   });
+}
+
+function scanModeKey(): string {
+  return `ar_wr_scan_${normalizeUrl(location.href)}`;
+}
+
+async function loadWebHighlightMode(): Promise<void> {
+  try {
+    const key = scanModeKey();
+    const got = await chrome.storage.local.get(key);
+    if (got[key] === "auto" || got[key] === "off") webHighlightMode = got[key];
+  } catch {
+    /* default "off" */
+  }
+  if (hlModeSelect) hlModeSelect.value = webHighlightMode;
+}
+
+// Chunk `s` into <=`size`-char pieces, preferring a sentence boundary in the
+// back half of each. Bounded by `maxChunks` to cap scan cost.
+function chunkText(s: string, size: number, maxChunks: number): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < s.length && out.length < maxChunks) {
+    let end = Math.min(i + size, s.length);
+    if (end < s.length) {
+      const bp = s.lastIndexOf(". ", end);
+      if (bp > i + size * 0.5) end = bp + 1;
+    }
+    const piece = s.slice(i, end).trim();
+    if (piece) out.push(piece);
+    i = end;
+  }
+  return out;
+}
+
+function maybeStartScan(): void {
+  if (webHighlightMode !== "auto" || webScanStarted || documentId < 0) return;
+  webScanStarted = true;
+  if (hlModeSelect) hlModeSelect.disabled = true;
+  const chunks = chunkText(extractReadableText(document.body, 30000), 3000, 10);
+  if (chunks.length === 0) {
+    if (hlModeSelect) hlModeSelect.disabled = false;
+    return;
+  }
+  send({ type: "ar-wr-scan-request", tabId: myTabId, documentId, chunks, force: false });
 }
 
 function getTabId(): Promise<number> {
@@ -199,8 +255,18 @@ function injectStyles(): void {
     #${UI_ID.toolbar} button.ar-wr-on {
       background: #6c8cff; border-color: #6c8cff; color: #12131a;
     }
+    #${UI_ID.toolbar} select {
+      font: inherit; cursor: pointer;
+      background: #232429; color: #e6e6e9;
+      border: 1px solid #40424c; border-radius: 6px;
+      padding: 5px 6px;
+    }
     #${UI_ID.panel} {
-      position: fixed; top: 0; right: 0; bottom: 0;
+      position: fixed !important; top: 0 !important; right: 0 !important;
+      /* An <iframe> is a replaced element: with top:0;bottom:0 and
+         height:auto it uses the 150px intrinsic height and drops bottom.
+         An explicit height is required to reach the viewport bottom. */
+      height: 100vh !important;
       width: 380px; max-width: 92vw; border: 0;
       z-index: 2147483646; background: #1d1f24;
       box-shadow: -2px 0 12px rgba(0,0,0,.45);
@@ -247,13 +313,39 @@ function buildToolbar(): void {
   imgBtn.textContent = "Select image";
   imgBtn.addEventListener("click", () => setRegionMode(!regionMode, imgBtn));
 
+  // Auto-detect dropdown -- opt-in, per URL. "Auto-detect" runs the LLM
+  // scan (via the panel) and re-renders; "Off" just stops the next run
+  // (existing flagged spans stay until reload).
+  const hlSel = document.createElement("select");
+  hlSel.setAttribute("data-ar-wr", "");
+  hlSel.title = "Automatically flag confusing text on this page (AI)";
+  for (const [v, t] of [
+    ["off", "Highlight: off"],
+    ["auto", "Highlight: auto-detect"],
+  ] as const) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = t;
+    hlSel.appendChild(o);
+  }
+  hlSel.addEventListener("change", () => {
+    const next = hlSel.value === "auto" ? "auto" : "off";
+    webHighlightMode = next;
+    chrome.storage.local.set({ [scanModeKey()]: next }).catch(() => {});
+    if (next === "auto") {
+      webScanStarted = false;
+      maybeStartScan();
+    }
+  });
+  hlModeSelect = hlSel;
+
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.textContent = "✕";
   closeBtn.title = "Turn off AcademicReader for this page";
   closeBtn.addEventListener("click", teardown);
 
-  bar.append(label, imgBtn, closeBtn);
+  bar.append(label, imgBtn, hlSel, closeBtn);
   document.documentElement.appendChild(bar);
 }
 
@@ -285,6 +377,8 @@ function onPanelMessage(raw: unknown): void {
     case "ar-wr-doc-registered":
       documentId = msg.documentId;
       renderHighlightList(msg.highlights);
+      if (hlModeSelect) hlModeSelect.disabled = false; // scan (if any) finished
+      maybeStartScan();
       break;
     case "ar-wr-highlight-created": {
       const resolver = pendingCreates.get(msg.requestId);
@@ -329,28 +423,86 @@ function createHighlight(
 // ---------------------------------------------------------------------------
 
 function renderHighlightList(highlights: PanelHighlight[]): void {
-  for (const t of tracked.values()) {
-    for (const el of t.els) el.remove();
-  }
+  // This runs again after a scan re-sends the list, so preserve per-id state
+  // that can't be reconstructed from the JSON: a text highlight's live Range
+  // (re-resolving by quote can land on a different occurrence of the same
+  // phrase) and a region's resolved <img> element.
+  const prev = new Map(tracked);
+  for (const t of tracked.values()) for (const el of t.els) el.remove();
   tracked.clear();
 
   const root = document.body;
   for (const h of highlights) {
+    const carried = prev.get(h.id);
     if (h.type === "text" && h.quoted_text) {
-      const resolved = resolveQuote(root, h.quoted_text, h.prefix_context, h.suffix_context);
-      const entry: TrackedHighlight = {
-        id: h.id,
-        kind: "text",
-        range: resolved ? resolved.range : null,
-        box: null,
-        els: [],
-      };
-      tracked.set(h.id, entry);
+      const liveRange =
+        carried?.range && carried.range.startContainer.isConnected ? carried.range : null;
+      const range =
+        liveRange ??
+        resolveQuote(root, h.quoted_text, h.prefix_context, h.suffix_context)?.range ??
+        null;
+      tracked.set(h.id, { id: h.id, kind: "text", range, box: null, anchorEl: null, els: [] });
     } else if (h.type === "region" && h.box) {
-      tracked.set(h.id, { id: h.id, kind: "region", range: null, box: h.box, els: [] });
+      const anchorEl =
+        carried?.anchorEl && carried.anchorEl.isConnected
+          ? carried.anchorEl
+          : findImageForAnchor(h.web_anchor, h.box);
+      tracked.set(h.id, { id: h.id, kind: "region", range: null, box: h.box, anchorEl, els: [] });
     }
   }
   repositionAll();
+}
+
+function imageAnchorFor(img: HTMLImageElement): string | null {
+  if (img.id) return `#${img.id}`;
+  // The `src` attribute is resolution-independent; `currentSrc` varies with
+  // DPR / viewport for a srcset image and would miss after reload.
+  const raw = img.getAttribute("src") || img.src;
+  if (!raw) return null;
+  try {
+    return `src::${new URL(raw, location.href).href}`;
+  } catch {
+    return null;
+  }
+}
+
+function findImageForAnchor(
+  anchor: string | null,
+  box: PersistedRegionBox | null,
+): HTMLElement | null {
+  if (!anchor) return null;
+  if (anchor.startsWith("#")) {
+    const el = document.getElementById(anchor.slice(1));
+    return el instanceof HTMLImageElement ? el : null;
+  }
+  if (!anchor.startsWith("src::")) return null;
+  const want = anchor.slice(5);
+  const resolve = (s: string | null): string => {
+    if (!s) return "";
+    try {
+      return new URL(s, location.href).href;
+    } catch {
+      return s;
+    }
+  };
+  const matches = Array.from(document.images).filter(
+    (im) => im.src === want || im.currentSrc === want || resolve(im.getAttribute("src")) === want,
+  );
+  if (matches.length === 0) return null;
+  if (matches.length === 1 || !box) return matches[0];
+  // Several images share the src -- pick whichever now sits closest to the
+  // stored box (still a useful disambiguator even when no longer accurate).
+  let best = matches[0];
+  let bestD = Infinity;
+  for (const im of matches) {
+    const r = im.getBoundingClientRect();
+    const d = Math.abs(r.left + window.scrollX - box.x) + Math.abs(r.top + window.scrollY - box.y);
+    if (d < bestD) {
+      bestD = d;
+      best = im;
+    }
+  }
+  return best;
 }
 
 // Rebuilds every overlay rectangle from the current geometry. Cheap enough
@@ -372,13 +524,31 @@ function repositionAll(): void {
           ),
         );
       }
-    } else if (t.kind === "region" && t.box) {
-      const x = t.box.x - window.scrollX;
-      const y = t.box.y - window.scrollY;
+    } else if (t.kind === "region") {
+      let x: number;
+      let y: number;
+      let w: number;
+      let h: number;
+      if (t.anchorEl && t.anchorEl.isConnected) {
+        // Track the <img>'s live position. The crop image stored with the
+        // chat stays the original screenshot -- only the on-page rectangle
+        // follows the element; that divergence is intentional.
+        const r = t.anchorEl.getBoundingClientRect();
+        x = r.left;
+        y = r.top;
+        w = r.width;
+        h = r.height;
+      } else if (t.box) {
+        x = t.box.x - window.scrollX;
+        y = t.box.y - window.scrollY;
+        w = t.box.w;
+        h = t.box.h;
+      } else {
+        continue;
+      }
+      if (w < 1 || h < 1) continue;
       t.els.push(
-        renderHighlightRect(overlayLayer, { x, y, w: t.box.w, h: t.box.h }, () =>
-          openHighlight(t.id),
-        ),
+        renderHighlightRect(overlayLayer, { x, y, w, h }, () => openHighlight(t.id)),
       );
     }
   }
@@ -493,6 +663,7 @@ async function createTextHighlightFromRange(range: Range, text: string): Promise
     kind: "text",
     range: range.cloneRange(),
     box: null,
+    anchorEl: null,
     els: [],
   };
   tracked.set(created.id, entry);
@@ -592,29 +763,30 @@ function wireRegionSelection(): void {
       cleanup();
 
       let viewportRect: { x: number; y: number; w: number; h: number } | null = null;
+      let anchorImg: HTMLImageElement | null = null;
       if (r.w >= MIN_DRAG_PX && r.h >= MIN_DRAG_PX) {
         viewportRect = r;
+        if (downTarget instanceof HTMLImageElement) anchorImg = downTarget;
       } else if (downTarget instanceof HTMLImageElement) {
         const b = downTarget.getBoundingClientRect();
         viewportRect = { x: b.left, y: b.top, w: b.width, h: b.height };
+        anchorImg = downTarget;
       }
       if (!viewportRect) return;
       armClickSuppressor();
 
       const clamped = clampToViewport(viewportRect);
       if (!clamped) return;
-      void captureRegion(clamped);
+      void captureRegion(clamped, anchorImg);
     },
     { capture: true, signal: listeners.signal },
   );
 }
 
-async function captureRegion(rect: {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}): Promise<void> {
+async function captureRegion(
+  rect: { x: number; y: number; w: number; h: number },
+  anchorImg: HTMLImageElement | null,
+): Promise<void> {
   if (documentId < 0) return;
 
   // Hide our own overlays/toolbar so they don't end up baked into the PNG
@@ -647,6 +819,7 @@ async function captureRegion(rect: {
     w: rect.w,
     h: rect.h,
   };
+  const webAnchor = anchorImg ? imageAnchorFor(anchorImg) : null;
   const requestId = uuid();
   const created = await createHighlight({
     type: "ar-wr-create-region-highlight",
@@ -655,10 +828,18 @@ async function captureRegion(rect: {
     documentId,
     box,
     imageBase64: cropped,
+    webAnchor,
   });
   if (!created) return;
 
-  tracked.set(created.id, { id: created.id, kind: "region", range: null, box, els: [] });
+  tracked.set(created.id, {
+    id: created.id,
+    kind: "region",
+    range: null,
+    box,
+    anchorEl: anchorImg,
+    els: [],
+  });
   repositionAll();
   openHighlight(created.id);
 }
@@ -779,6 +960,8 @@ function teardown(): void {
   tracked.clear();
   for (const id of Object.values(UI_ID)) document.getElementById(id)?.remove();
   document.body.classList.remove("ar-wr-region-cursor");
+  hlModeSelect = null;
+  webScanStarted = false;
   window.__arWebReader = false;
 }
 
