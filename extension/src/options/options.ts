@@ -46,6 +46,7 @@ const SAME_AS_MODEL_VALUE = "";
 const form = document.getElementById("settings-form") as HTMLFormElement;
 const providerSelect = document.getElementById("provider") as HTMLSelectElement;
 const codexCliNoteField = document.getElementById("codex-cli-note-field") as HTMLDivElement;
+const claudeCliNoteField = document.getElementById("claude-cli-note-field") as HTMLDivElement;
 const baseUrlField = document.getElementById("base-url-field") as HTMLDivElement;
 const apiKeyField = document.getElementById("api-key-field") as HTMLDivElement;
 const baseUrlInput = document.getElementById("base-url") as HTMLInputElement;
@@ -83,22 +84,29 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+// codex-cli / claude-cli use a local CLI login instead of an API key or a
+// Base URL — mirrors CLI_PROVIDERS in shared/llm/index.ts.
+function isCliProvider(provider: string): boolean {
+  return provider === "codex-cli" || provider === "claude-cli";
+}
+
 function needsApiKey(provider: string): boolean {
-  return provider !== "codex-cli";
+  return !isCliProvider(provider);
 }
 
 function updateProviderVisibility(): void {
   const provider = providerSelect.value;
-  const isCodexCli = provider === "codex-cli";
-  codexCliNoteField.style.display = isCodexCli ? "" : "none";
-  baseUrlField.classList.toggle("hidden", isCodexCli);
-  apiKeyField.classList.toggle("hidden", isCodexCli);
+  const cli = isCliProvider(provider);
+  codexCliNoteField.style.display = provider === "codex-cli" ? "" : "none";
+  claudeCliNoteField.style.display = provider === "claude-cli" ? "" : "none";
+  baseUrlField.classList.toggle("hidden", cli);
+  apiKeyField.classList.toggle("hidden", cli);
   updateRefreshButtonEnabled();
 }
 
 function updateRefreshButtonEnabled(): void {
   const provider = providerSelect.value;
-  const canFetch = provider === "codex-cli" || apiKeyInput.value.length > 0;
+  const canFetch = isCliProvider(provider) || apiKeyInput.value.length > 0;
   refreshModelsButton.disabled = !canFetch;
   refreshModelsButton.title = canFetch
     ? ""
@@ -241,7 +249,7 @@ function applySettings(settings: SettingsInfo) {
   setModelSelection(modelSelect, modelCustomInput, settings.model, provider, false);
   setModelSelection(visionModelSelect, visionModelCustomInput, settings.vision_model, provider, true);
 
-  hasSavedSettings = settings.api_key_set || providerSelect.value === "codex-cli";
+  hasSavedSettings = settings.api_key_set || isCliProvider(providerSelect.value);
   updateProviderVisibility();
   updateTestButtonsEnabled();
 }

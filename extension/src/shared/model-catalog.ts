@@ -14,6 +14,7 @@
 // deliberately tolerant/defensive: if a provider ever ships a different
 // shape, this returns an empty list (caller falls back to manual entry)
 // rather than throwing and blocking the whole Options page.
+import { listClaudeModels } from "./llm/providers/claude-cli";
 import { listCodexModels } from "./llm/providers/codex-cli";
 
 export type CatalogModel = { id: string; label: string };
@@ -74,6 +75,11 @@ async function fetchCodexCliModels(): Promise<CatalogModel[]> {
   return models.map((m) => ({ id: m.slug, label: m.display_name }));
 }
 
+async function fetchClaudeCliModels(): Promise<CatalogModel[]> {
+  const models = await listClaudeModels();
+  return models.map((m) => ({ id: m.slug, label: m.display_name }));
+}
+
 /**
  * Fetches the live model list for `provider`. Throws with a message
  * suitable for direct display on a failure (network error, bad key, etc.)
@@ -86,6 +92,7 @@ export async function fetchModelsForProvider(
   baseUrlOverride?: string,
 ): Promise<CatalogModel[]> {
   if (provider === "codex-cli") return fetchCodexCliModels();
+  if (provider === "claude-cli") return fetchClaudeCliModels();
 
   if (!apiKey) throw new Error("Enter an API key first.");
   const baseUrl = baseUrlOverride || DEFAULT_BASE_URLS[provider];

@@ -260,8 +260,8 @@
       <h1>AcademicReader Settings</h1>
       <p class="subtitle">
         Point AcademicReader at any LLM provider — Anthropic, OpenAI, Google,
-        DeepSeek, a locally logged-in Codex CLI, or a self-hosted /
-        OpenAI-compatible endpoint.
+        DeepSeek, a locally logged-in Codex or Claude CLI, or a self-hosted
+        / OpenAI-compatible endpoint.
       </p>
 
       <form id="settings-form">
@@ -273,6 +273,7 @@
             <option value="gemini">Google (Gemini, AI Studio)</option>
             <option value="deepseek">DeepSeek</option>
             <option value="codex-cli">Codex CLI (ChatGPT login, no API key)</option>
+            <option value="claude-cli">Claude CLI (Claude login, no API key)</option>
           </select>
           <div class="help" id="provider-help">
             For Google, this uses AI Studio API keys — not
@@ -293,6 +294,22 @@
             trade-offs worth knowing: replies arrive all at once after a
             few seconds rather than streaming word-by-word, and each call
             carries meaningfully more overhead than a direct API call.
+          </div>
+        </div>
+
+        <div class="field" id="claude-cli-note-field" style="display: none">
+          <div class="help">
+            Uses whatever Claude account the <code>claude</code> CLI is
+            signed in as on this machine — no API key, and it draws on that
+            subscription's included usage instead of metered API billing.
+            One-time setup required: run
+            <code>extension/native-host/register-claude.sh</code> once
+            (Chrome can't launch local programs on its own — this registers
+            a small bridge process it's allowed to launch on demand). The
+            CLI can stream, but this bridge returns each reply in one
+            piece, so replies arrive all at once after a few seconds rather
+            than word-by-word, and each call carries more overhead than a
+            direct API call.
           </div>
         </div>
 
