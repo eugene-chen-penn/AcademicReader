@@ -145,8 +145,23 @@ def run_claude_json(args: list[str], timeout: int) -> dict:
 
 
 def handle_list_models() -> dict:
-    # The Claude CLI has no programmatic model-list command, so this is a
-    # fixed set of aliases rather than a live query. See MODEL_ALIASES.
+    # The Claude CLI has no programmatic model-list command, so the list
+    # itself is fixed (see MODEL_ALIASES). But the Options page's "Refresh
+    # models" button is the one pre-save health check the user has, so
+    # actually run the CLI here — a missing binary or a broken install
+    # should surface on that click, not later as a confusing chat error.
+    try:
+        proc = subprocess.run(
+            ["claude", "--version"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+        )
+    except Exception as e:  # noqa: BLE001 - surface as a normal error response
+        return {"ok": False, "error": f"claude CLI not runnable: {e}"}
+    if proc.returncode != 0:
+        return {"ok": False, "error": f"claude --version exited with status {proc.returncode}"}
     return {"ok": True, "models": MODEL_ALIASES}
 
 

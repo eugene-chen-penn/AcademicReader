@@ -4,8 +4,9 @@ A Chrome extension that opens academic PDFs in a custom viewer, flags confusing 
 (highlighting every repeat occurrence of a flagged phrase too, all sharing one conversation), lets
 you drag-select figures/tables for explanation, and gives each highlight its own persistent chat.
 Everything runs inside the extension itself — no server, no terminal, no separate process (the
-opt-in Codex CLI and Claude CLI bridges being the exceptions — see
-[below](#codex-cli-chatgpt-login-no-api-key)). Storage is IndexedDB/`chrome.storage.local`, and it
+opt-in [Codex CLI](#codex-cli-chatgpt-login-no-api-key) and [Claude
+CLI](#claude-cli-claude-login-no-api-key) bridges being the exceptions). Storage is
+IndexedDB/`chrome.storage.local`, and it
 talks directly to whatever LLM you configure: Anthropic, Google Gemini, DeepSeek, OpenAI, a locally
 logged-in Codex CLI or Claude CLI (no API key), or any OpenAI-compatible endpoint.
 
