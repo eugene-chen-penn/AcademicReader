@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AcademicReader",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Redirects academic PDF links into an AI-assisted reader with highlight-and-chat support.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5Xbp1TFkJrgzPBZOBWf72CtDVFaC/6b/+IzzHJqNcSvHEaidKgYhdNpTAyLgUv4LOFwy7WeVOsdzCqeNqVpqGVW/gLjwKjcaNf9Y3nURewNtCikHs0aiAePEhvJlOJ1Djc3LjPUUr1tkqt2ilSMvF6RaVQhuW/QTMfxBxDOC6IqYSK34M1YVFjVIJFHgDodJgIOo+irQEdoP4K/+By/gfwQP379zq72POyK5m0d/ppnNrxl4/kh1Ex+mt8A63YhctQyyENS9XLIKb+HjN/6KC03xDVTiG5rMxUqc88lfJ7Bm56CBaR3OCH/r6pdcnszlOtb0XxdXHfH0hl2Ab+O0PQIDAQAB",
   "permissions": [
