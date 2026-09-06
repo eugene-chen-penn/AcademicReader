@@ -19,6 +19,7 @@ import type {
   PanelToCsMessage,
   PersistedRegionBox,
 } from "./protocol";
+import { activeKey, familiarityKey, normalizeUrl, scanModeKey } from "./url-key";
 
 declare global {
   interface Window {
@@ -53,6 +54,7 @@ interface TrackedHighlight {
   box: PersistedRegionBox | null; // region highlights: page-relative CSS px fallback
   anchorEl: HTMLElement | null; // region highlights anchored to an <img>: tracked live
   els: HTMLElement[]; // current overlay rectangles
+  difficulty: number | null; // 1..10 scan score; null = manual / unscored, always shown
 }
 
 const tracked = new Map<number, TrackedHighlight>();
@@ -85,6 +87,16 @@ let webHighlightMode: "off" | "auto" = "off";
 let webScanStarted = false;
 let hlModeSelect: HTMLSelectElement | null = null;
 
+// Familiarity slider -- the web mirror of scan-controller.ts's PDF-viewer
+// control. Same polarity: a scan highlight shows iff its difficulty is
+// >= this level (null difficulty always shows). Persisted per-URL.
+const MIN_FAMILIARITY = 1;
+const MAX_FAMILIARITY = 10;
+const DEFAULT_FAMILIARITY = 5;
+let familiarityLevel = DEFAULT_FAMILIARITY;
+let familiaritySlider: HTMLInputElement | null = null;
+let familiarityValueLabel: HTMLSpanElement | null = null;
+
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
@@ -107,7 +119,7 @@ async function main(): Promise<void> {
   wireRegionSelection();
   wireReflow();
 
-  await loadWebHighlightMode();
+  await Promise.all([loadWebHighlightMode(), loadFamiliarityLevel()]);
   registerDoc();
 }
 
@@ -124,19 +136,52 @@ function registerDoc(): void {
   });
 }
 
-function scanModeKey(): string {
-  return `ar_wr_scan_${normalizeUrl(location.href)}`;
+function scanModeStorageKey(): string {
+  return scanModeKey(normalizeUrl(location.href));
 }
 
 async function loadWebHighlightMode(): Promise<void> {
   try {
-    const key = scanModeKey();
+    const key = scanModeStorageKey();
     const got = await chrome.storage.local.get(key);
     if (got[key] === "auto" || got[key] === "off") webHighlightMode = got[key];
   } catch {
     /* default "off" */
   }
   if (hlModeSelect) hlModeSelect.value = webHighlightMode;
+}
+
+async function loadFamiliarityLevel(): Promise<void> {
+  try {
+    const key = familiarityKey(normalizeUrl(location.href));
+    const got = await chrome.storage.local.get(key);
+    const v = got[key];
+    if (typeof v === "number" && v >= MIN_FAMILIARITY && v <= MAX_FAMILIARITY) {
+      familiarityLevel = v;
+    }
+  } catch {
+    /* default DEFAULT_FAMILIARITY */
+  }
+  if (familiaritySlider) familiaritySlider.value = String(familiarityLevel);
+  if (familiarityValueLabel) {
+    familiarityValueLabel.textContent = `Showing difficulty ≥ ${familiarityLevel}`;
+  }
+  applyDifficultyFilter();
+}
+
+// A rendered scan highlight shows iff its difficulty meets the slider
+// threshold. null difficulty (manual highlights, rows predating the scale)
+// always shows -- no basis to filter it. Same rule as scan-controller.ts.
+function shouldShow(difficulty: number | null): boolean {
+  if (difficulty === null) return true;
+  return difficulty >= familiarityLevel;
+}
+
+function applyDifficultyFilter(): void {
+  for (const t of tracked.values()) {
+    const show = shouldShow(t.difficulty);
+    for (const el of t.els) el.style.display = show ? "" : "none";
+  }
 }
 
 // Chunk `s` into <=`size`-char pieces, preferring a sentence boundary in the
@@ -188,34 +233,8 @@ function send(msg: CsToPanelMessage): void {
   });
 }
 
-// Strip the fragment and common tracking params so the same article resolves
-// to one stored document across visits. Keeps the path (that's the identity
-// for most publishers) and any remaining "real" query params.
-function normalizeUrl(href: string): string {
-  try {
-    const u = new URL(href);
-    u.hash = "";
-    const drop = [
-      "utm_source",
-      "utm_medium",
-      "utm_campaign",
-      "utm_term",
-      "utm_content",
-      "gclid",
-      "fbclid",
-      "mc_cid",
-      "mc_eid",
-      "ref",
-      "cx_testId",
-      "cx_testVariant",
-      "mod",
-    ];
-    for (const k of drop) u.searchParams.delete(k);
-    return u.origin + u.pathname + (u.searchParams.toString() ? `?${u.searchParams}` : "");
-  } catch {
-    return href.split("#")[0];
-  }
-}
+// normalizeUrl + the storage-key builders live in ./url-key, shared with
+// popup.ts (which writes the "activated" marker this script reads on load).
 
 // ---------------------------------------------------------------------------
 // UI scaffold
@@ -260,6 +279,16 @@ function injectStyles(): void {
       background: #232429; color: #e6e6e9;
       border: 1px solid #40424c; border-radius: 6px;
       padding: 5px 6px;
+    }
+    #${UI_ID.toolbar} .ar-wr-fam {
+      display: flex; align-items: center; gap: 6px;
+    }
+    #${UI_ID.toolbar} .ar-wr-fam input[type="range"] {
+      width: 92px; cursor: pointer; accent-color: #6c8cff; margin: 0;
+    }
+    #${UI_ID.toolbar} .ar-wr-fam-value {
+      font-weight: 400; color: #9a9aa5;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
     }
     #${UI_ID.panel} {
       position: fixed !important; top: 0 !important; right: 0 !important;
@@ -331,7 +360,7 @@ function buildToolbar(): void {
   hlSel.addEventListener("change", () => {
     const next = hlSel.value === "auto" ? "auto" : "off";
     webHighlightMode = next;
-    chrome.storage.local.set({ [scanModeKey()]: next }).catch(() => {});
+    chrome.storage.local.set({ [scanModeStorageKey()]: next }).catch(() => {});
     if (next === "auto") {
       webScanStarted = false;
       maybeStartScan();
@@ -339,13 +368,57 @@ function buildToolbar(): void {
   });
   hlModeSelect = hlSel;
 
+  // Familiarity slider -- 1 (beginner, show every flagged span) .. 10
+  // (expert, show only the hardest). A span shows iff difficulty >= value.
+  // Mirrors scan-controller.ts's PDF-viewer slider; persisted per-URL.
+  const famWrap = document.createElement("div");
+  famWrap.className = "ar-wr-fam";
+  famWrap.setAttribute("data-ar-wr", "");
+
+  const famSlider = document.createElement("input");
+  famSlider.type = "range";
+  famSlider.min = String(MIN_FAMILIARITY);
+  famSlider.max = String(MAX_FAMILIARITY);
+  famSlider.step = "1";
+  famSlider.value = String(familiarityLevel);
+  famSlider.setAttribute("data-ar-wr", "");
+  famSlider.setAttribute("aria-label", "Familiarity level");
+  famSlider.title =
+    "How familiar are you with this topic? Left = beginner (show more flagged spans), right = expert (show only the hardest).";
+
+  const famValue = document.createElement("span");
+  famValue.className = "ar-wr-fam-value";
+  famValue.textContent = `≥ ${familiarityLevel}`;
+
+  const onFamChange = (): void => {
+    const level = Number(famSlider.value);
+    if (!Number.isFinite(level)) return;
+    familiarityLevel = level;
+    famValue.textContent = `≥ ${level}`;
+    applyDifficultyFilter();
+    chrome.storage.local
+      .set({ [familiarityKey(normalizeUrl(location.href))]: level })
+      .catch(() => {});
+  };
+  famSlider.addEventListener("input", onFamChange);
+  famSlider.addEventListener("change", onFamChange);
+  famWrap.append(famSlider, famValue);
+  familiaritySlider = famSlider;
+  familiarityValueLabel = famValue;
+
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.textContent = "✕";
-  closeBtn.title = "Turn off AcademicReader for this page";
-  closeBtn.addEventListener("click", teardown);
+  closeBtn.title = "Turn off AcademicReader for this page (stops auto-reopening here too)";
+  closeBtn.addEventListener("click", () => {
+    // Clearing the auto-reopen marker is a ✕-only action, so it lives here
+    // rather than in teardown() -- teardown() also runs on a transient
+    // get-tab-id failure (see main()), and that must not opt the page out.
+    chrome.storage.local.remove(activeKey(normalizeUrl(location.href))).catch(() => {});
+    teardown();
+  });
 
-  bar.append(label, imgBtn, hlSel, closeBtn);
+  bar.append(label, imgBtn, hlSel, famWrap, closeBtn);
   document.documentElement.appendChild(bar);
 }
 
@@ -379,6 +452,13 @@ function onPanelMessage(raw: unknown): void {
       renderHighlightList(msg.highlights);
       if (hlModeSelect) hlModeSelect.disabled = false; // scan (if any) finished
       maybeStartScan();
+      // The doc is now persisted -- mark this URL so the per-origin
+      // auto-inject content script reopens the reader here next visit.
+      // popup.ts also writes this before injecting; re-writing is harmless
+      // and covers any path that reached activation without the popup.
+      chrome.storage.local
+        .set({ [activeKey(normalizeUrl(location.href))]: true })
+        .catch(() => {});
       break;
     case "ar-wr-highlight-created": {
       const resolver = pendingCreates.get(msg.requestId);
@@ -441,13 +521,29 @@ function renderHighlightList(highlights: PanelHighlight[]): void {
         liveRange ??
         resolveQuote(root, h.quoted_text, h.prefix_context, h.suffix_context)?.range ??
         null;
-      tracked.set(h.id, { id: h.id, kind: "text", range, box: null, anchorEl: null, els: [] });
+      tracked.set(h.id, {
+        id: h.id,
+        kind: "text",
+        range,
+        box: null,
+        anchorEl: null,
+        els: [],
+        difficulty: h.difficulty,
+      });
     } else if (h.type === "region" && h.box) {
       const anchorEl =
         carried?.anchorEl && carried.anchorEl.isConnected
           ? carried.anchorEl
           : findImageForAnchor(h.web_anchor, h.box);
-      tracked.set(h.id, { id: h.id, kind: "region", range: null, box: h.box, anchorEl, els: [] });
+      tracked.set(h.id, {
+        id: h.id,
+        kind: "region",
+        range: null,
+        box: h.box,
+        anchorEl,
+        els: [],
+        difficulty: h.difficulty,
+      });
     }
   }
   repositionAll();
@@ -552,6 +648,9 @@ function repositionAll(): void {
       );
     }
   }
+  // t.els were just rebuilt from scratch, so the per-rect visibility set by
+  // the familiarity slider has to be re-applied every pass.
+  applyDifficultyFilter();
 }
 
 function openHighlight(id: number): void {
@@ -665,6 +764,7 @@ async function createTextHighlightFromRange(range: Range, text: string): Promise
     box: null,
     anchorEl: null,
     els: [],
+    difficulty: created.difficulty,
   };
   tracked.set(created.id, entry);
   repositionAll();
@@ -839,6 +939,7 @@ async function captureRegion(
     box,
     anchorEl: anchorImg,
     els: [],
+    difficulty: created.difficulty,
   });
   repositionAll();
   openHighlight(created.id);
@@ -961,6 +1062,9 @@ function teardown(): void {
   for (const id of Object.values(UI_ID)) document.getElementById(id)?.remove();
   document.body.classList.remove("ar-wr-region-cursor");
   hlModeSelect = null;
+  familiaritySlider = null;
+  familiarityValueLabel = null;
+  familiarityLevel = DEFAULT_FAMILIARITY;
   webScanStarted = false;
   window.__arWebReader = false;
 }
@@ -969,10 +1073,29 @@ function teardown(): void {
 // entry point -- last, so every module-level const above is initialized
 // ---------------------------------------------------------------------------
 
-if (window.__arWebReader) {
-  // Already active in this page -- a second executeScript is a no-op.
-  // (Re-running would double every listener and stack a second iframe.)
-} else {
+// This bundle is injected two ways: popup.ts's executeScript (explicit
+// "read this page", which writes the active marker BEFORE injecting), and a
+// per-origin content script popup.ts registers so previously-read articles
+// light up on their own when reopened. That second path fires on EVERY page
+// of the origin, so gate on the per-URL marker: no marker -> this article
+// was never opted in, do nothing and leave window.__arWebReader untouched
+// (a popup executeScript may be racing this read; if it wins, let it run).
+async function bootstrap(): Promise<void> {
+  if (window.__arWebReader) return;
+
+  let active = false;
+  try {
+    const key = activeKey(normalizeUrl(location.href));
+    const got = await chrome.storage.local.get(key);
+    active = got[key] === true;
+  } catch {
+    /* storage unavailable -- treat as not activated */
+  }
+  if (!active) return;
+  if (window.__arWebReader) return; // a racing popup copy already claimed it
+
   window.__arWebReader = true;
   void main();
 }
+
+void bootstrap();

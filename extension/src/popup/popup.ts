@@ -11,6 +11,8 @@
 // visible button + real user feedback (permission-denied, invalid URL,
 // etc. all show a status message here instead of failing silently).
 
+import { activeKey, normalizeUrl } from "../web-reader/url-key";
+
 const currentUrlEl = document.getElementById("current-url") as HTMLDivElement;
 const openCurrentButton = document.getElementById("open-current-button") as HTMLButtonElement;
 const readWebpageButton = document.getElementById("read-webpage-button") as HTMLButtonElement;
@@ -109,11 +111,48 @@ openCurrentButton.addEventListener("click", async () => {
 });
 
 /**
+ * Registers a persistent, per-origin content script that runs web-reader.js
+ * at document_idle on every future page load for `origin`. web-reader.ts's
+ * bootstrap gate means it only actually builds its UI on URLs that carry the
+ * per-URL "activated" marker (set below), so on an origin with one read
+ * article this loads a small IIFE that reads one storage key and returns on
+ * every other page — the cost of "reopen a previously-read article and the
+ * highlights are just there" without a background tab listener.
+ *
+ * Deduped by a deterministic id; a second activation on the same origin is a
+ * no-op. Best-effort: returns false (rather than throwing) on failure, so
+ * same-tab activation still proceeds -- only the auto-reopen is lost, and
+ * the caller surfaces that instead of letting it fail silently.
+ */
+async function ensureAutoContentScript(origin: string): Promise<boolean> {
+  const id = `ar-wr-auto:${origin}`;
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [id] });
+    if (existing.length > 0) return true;
+    await chrome.scripting.registerContentScripts([
+      {
+        id,
+        matches: [`${origin}/*`],
+        js: ["web-reader.js"],
+        runAt: "document_idle",
+        persistAcrossSessions: true,
+      },
+    ]);
+    return true;
+  } catch (err) {
+    console.warn("popup: could not register auto content script for", origin, err);
+    return false;
+  }
+}
+
+/**
  * "Read this web page in place": for articles (WSJ etc.) that aren't PDFs
  * and shouldn't be converted to one. Requests the host permission for this
  * origin (needed so the injected content script's screenshot-crop can call
- * captureVisibleTab, and so it persists across navigations), then injects
- * web-reader.js into the current tab. The content script is idempotent — a
+ * captureVisibleTab, and so it persists across navigations), marks this URL
+ * as activated (so it auto-reopens on later visits), registers the
+ * per-origin auto-inject content script, then injects web-reader.js into the
+ * current tab for immediate activation. The content script is idempotent — a
  * second click on an already-active page is a no-op.
  */
 readWebpageButton.addEventListener("click", async () => {
@@ -141,7 +180,16 @@ readWebpageButton.addEventListener("click", async () => {
       setStatus("error", "Permission was not granted — can't read this page without it.");
       return;
     }
+    // Marker must be written BEFORE injecting: web-reader.ts's bootstrap
+    // reads it to decide whether to activate.
+    await chrome.storage.local.set({ [activeKey(normalizeUrl(tab.url))]: true });
+    const autoRegistered = await ensureAutoContentScript(origin);
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["web-reader.js"] });
+    if (!autoRegistered) {
+      // Page is active now, but it won't come back on its own next visit.
+      setStatus("info", "Reader started, but auto-reopen for this site couldn't be set up.");
+      return;
+    }
     window.close();
   } catch (err) {
     setStatus("error", `Couldn't start: ${(err as Error).message}`);

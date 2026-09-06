@@ -99,12 +99,18 @@ export type PanelHighlight = {
   box: PersistedRegionBox | null;
   // "#<id>" / "src::<url>" for an image-anchored region highlight, else null.
   web_anchor: string | null;
+  // 1..10 scan difficulty, or null for manual highlights / rows predating
+  // the scan scale. web-reader.ts filters rendered rects against its
+  // familiarity slider using this (see below).
+  difficulty: number | null;
 };
 
-// Note: web scan highlights (source "scan") are rendered with NO difficulty
-// filter -- unlike the PDF viewer's familiarity slider, web deliberately
-// shows every flagged span. `page_number` on those rows is a chunk index
-// and is meaningless outside this feature (see panel.ts's invariant note).
+// Web scan highlights (source "scan") ARE filtered against the web-reader
+// toolbar's familiarity slider, the same way the PDF viewer filters against
+// its own slider: a span shows iff `difficulty >= sliderLevel`, and a span
+// with null difficulty always shows. `page_number` on those rows is a chunk
+// index and is meaningless outside this feature (see panel.ts's invariant
+// note).
 
 export type PanelToCsMessage =
   | {

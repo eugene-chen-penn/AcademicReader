@@ -155,10 +155,18 @@ as it renders normally:
   redrawn from stored page coordinates (best effort).
 - **Auto-detect** — the floating control's **Highlight** dropdown (default **off**, remembered per
   URL) runs the same AI "flag confusing spans" pass PDFs get: switch it to **auto-detect** and the
-  article's text is chunked, scanned, and the flagged spans rendered inline. Every flagged span
-  shows (no familiarity slider on web yet).
+  article's text is chunked, scanned, and the flagged spans rendered inline.
+- **Familiarity slider** — next to the Highlight dropdown, the same 1–10 control the PDF reader
+  has: a flagged span shows only when its difficulty is at or above the slider value (left =
+  beginner, show everything; right = expert, show only the hardest). Position is remembered per
+  URL.
 - Highlights persist per article (keyed by its URL, tracking params stripped) and are re-anchored
   by text search when you reopen the page.
+- **Auto-reopen** — once you've read a page this way, the reader comes back on its own the next
+  time you open that URL (or any other article on the same site you've read before): the overlay,
+  your highlights, and the slider are restored without touching the toolbar icon. The **✕** on the
+  floating control turns the page off *and* opts it out of auto-reopening; the toolbar button
+  brings it back.
 
 The chat panel runs in an isolated extension frame injected into the page, so your provider/API
 key and stored history stay on the extension's side and never touch the website. Known limits of
