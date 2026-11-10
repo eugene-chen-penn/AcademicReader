@@ -8,3 +8,8 @@ extension/playwright-report/
 
 # Python bytecode (native-host/*.py are shipped as source)
 __pycache__/
+
+# Private signing keys must never be committed
+*.pem
+*.key
+extension/dev-keys/*.pem

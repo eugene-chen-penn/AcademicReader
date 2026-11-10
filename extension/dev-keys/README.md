@@ -1,7 +1,8 @@
-Dev-only signing key, pinned via `manifest.json`'s `"key"` field so `chrome://extensions` assigns the
-same extension ID (`dplbidighoojohkjjcegfdfinffmdmdj`) every time this is loaded unpacked. `rules.json`'s
-static DNR redirect rules hardcode that ID as their `regexSubstitution` target, so the two must stay in
-sync — if you ever regenerate `dev_key.pem`, recompute the ID and update `rules.json` to match.
+The dev signing key is **not stored in this repo**. It pins the unpacked extension ID via `manifest.json`'s
+`"key"` field (public half only) so `chrome://extensions` assigns the same ID on every load.
 
-This key is never used to publish to the Chrome Web Store (a real publish uses a Web Store-managed key)
-— it exists purely so local unpacked loads are reproducible across machines/rebuilds.
+Current ID: `cpngahcnffppbhanlckaljfodmnnlgln`. `rules.json` and `native-host/register*.sh` hardcode it — if you regenerate the key,
+recompute the ID (sha256 of the DER public key, first 32 hex chars, mapped 0-9a-f -> a-p) and update them.
+
+Keep the private key outside the repo (e.g. `~/.config/academicreader/dev_key.pem`). The previous key was
+accidentally committed and has been retired (old ID `dplbidighoojohkjjcegfdfinffmdmdj`).

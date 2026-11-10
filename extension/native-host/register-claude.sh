@@ -9,7 +9,7 @@
 # independent hosts and do not interfere.
 set -euo pipefail
 
-EXTENSION_ID="dplbidighoojohkjjcegfdfinffmdmdj"
+EXTENSION_ID="cpngahcnffppbhanlckaljfodmnnlgln"
 HOST_NAME="com.academicreader.claudebridge"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -6,7 +6,7 @@
 # changes; safe to re-run otherwise.
 set -euo pipefail
 
-EXTENSION_ID="dplbidighoojohkjjcegfdfinffmdmdj"
+EXTENSION_ID="cpngahcnffppbhanlckaljfodmnnlgln"
 HOST_NAME="com.academicreader.codexbridge"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
